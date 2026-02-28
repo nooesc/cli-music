@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, List, ListItem, Padding, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Padding, Paragraph},
     Frame,
 };
 
@@ -11,14 +11,9 @@ use crate::bridge::{PlayState, RepeatMode};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let width = frame.area().width;
-    let height = frame.area().height;
-
     // Compact mode: hide now-playing panel when too narrow
     let show_now_playing = width >= 60;
-    // Tiny mode: simplify controls when very short
-    let show_status_row = height >= 10;
-
-    let controls_height = if show_status_row { 4 } else { 3 };
+    let controls_height = 1;
 
     let [header, main_area, bottom_bar] = Layout::vertical([
         Constraint::Length(1),
@@ -45,10 +40,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         draw_library(frame, main_area, app);
     }
 
-    draw_controls(frame, bottom_bar, app, show_status_row);
+    draw_controls(frame, bottom_bar, app);
 }
 
-fn draw_header(frame: &mut Frame, area: Rect, _app: &App) {
+fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let width = area.width as usize;
 
     let mut spans = vec![
@@ -56,7 +51,11 @@ fn draw_header(frame: &mut Frame, area: Rect, _app: &App) {
     ];
 
     // Only show keybindings if there's room
-    let hints = "  q:quit  space:play  n/p:track  ,/.:seek  s:shuf  r:rep  /:search";
+    let play_hint = match app.player.state {
+        PlayState::Playing => "space:pause",
+        _ => "space:play",
+    };
+    let hints = format!("  {play_hint}  S-\u{2190}/\u{2192}:track  m:mode  s:search  f:save");
     if width > 50 {
         spans.push(Span::from(hints).dark_gray());
     }
@@ -173,10 +172,6 @@ fn draw_library(frame: &mut Frame, area: Rect, app: &mut App) {
             app.tracks.first().map(|t| t.album.as_str()).unwrap_or("Tracks"),
             app.tracks.len()
         ),
-        LibraryView::SearchResults => format!(
-            " Search \u{2014} {} results ",
-            app.tracks.len()
-        ),
     };
 
     let block = Block::default()
@@ -224,10 +219,8 @@ fn draw_library(frame: &mut Frame, area: Rect, app: &mut App) {
 fn render_library_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let highlight_style = Style::default()
         .bg(Color::Cyan)
-        .fg(Color::Black)
+        .fg(Color::White)
         .add_modifier(Modifier::BOLD);
-
-    let available_width = area.width as usize;
 
     match app.view {
         LibraryView::Playlists => {
@@ -248,7 +241,7 @@ fn render_library_list(frame: &mut Frame, area: Rect, app: &mut App) {
 
             frame.render_stateful_widget(list, area, &mut app.playlist_state);
         }
-        LibraryView::Tracks | LibraryView::SearchResults => {
+        LibraryView::Tracks => {
             let items: Vec<ListItem> = app
                 .tracks
                 .iter()
@@ -263,44 +256,18 @@ fn render_library_list(frame: &mut Frame, area: Rect, app: &mut App) {
                         Span::from("  ")
                     };
 
-                    let duration = format_time(t.duration);
-
-                    // Calculate space for album: total - name - artist - decorators
-                    let name_artist_len = t.name.len() + t.artist.len() + 8; // " - " + dur + spaces
-                    let show_album = available_width > name_artist_len + 15;
-
                     let name_style = if is_playing {
                         Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(Color::White)
                     };
 
-                    let mut spans = vec![
+                    let spans = vec![
                         prefix,
                         Span::styled(t.name.clone(), name_style),
                         Span::styled("  ", Style::default()),
                         Span::styled(t.artist.clone(), Style::default().fg(Color::Cyan)),
                     ];
-
-                    if show_album {
-                        // Truncate album if needed (char-safe)
-                        let max_album = 20;
-                        let album_display: String = if t.album.chars().count() > max_album {
-                            let truncated: String = t.album.chars().take(max_album - 3).collect();
-                            format!("{truncated}...")
-                        } else {
-                            t.album.clone()
-                        };
-                        spans.push(Span::styled(
-                            format!("  {}", album_display),
-                            Style::default().fg(Color::DarkGray),
-                        ));
-                    }
-
-                    spans.push(Span::styled(
-                        format!("  {}", duration),
-                        Style::default().fg(Color::DarkGray),
-                    ));
 
                     ListItem::new(Line::from(spans))
                 })
@@ -315,64 +282,9 @@ fn render_library_list(frame: &mut Frame, area: Rect, app: &mut App) {
     }
 }
 
-fn draw_controls(frame: &mut Frame, area: Rect, app: &App, show_status_row: bool) {
-    let block = Block::default().borders(Borders::ALL);
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+fn draw_controls(frame: &mut Frame, area: Rect, app: &App) {
+    let inner = area;
 
-    if !show_status_row {
-        // Compact: just the progress bar
-        draw_progress(frame, inner, app);
-        return;
-    }
-
-    let [progress_area, status_area] = Layout::vertical([
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .areas(inner);
-
-    draw_progress(frame, progress_area, app);
-
-    // Status line
-    let separator = Span::styled(" \u{2502} ", Style::default().fg(Color::DarkGray));
-
-    let shuffle_icon = if app.player.shuffle { "\u{2921} " } else { "" };
-    let shuffle_span = if app.player.shuffle {
-        Span::styled(format!("{shuffle_icon}shuffle"), Style::default().fg(Color::Green))
-    } else {
-        Span::styled("shuffle", Style::default().fg(Color::DarkGray))
-    };
-
-    let repeat_span = match app.player.repeat {
-        RepeatMode::Off => Span::styled("repeat", Style::default().fg(Color::DarkGray)),
-        RepeatMode::One => Span::styled("\u{21bb} one", Style::default().fg(Color::Green)),
-        RepeatMode::All => Span::styled("\u{21bb} all", Style::default().fg(Color::Green)),
-    };
-
-    let vol = app.player.volume.clamp(0, 100);
-    let vol_level = ((vol as f64 / 100.0) * 10.0).round() as usize;
-    let vol_bar: String = (0..10)
-        .map(|i| if i < vol_level { '\u{2501}' } else { '\u{2500}' })
-        .collect();
-    let vol_span = Span::styled(
-        format!("\u{1f50a} {vol_bar} {vol}%"),
-        Style::default().fg(Color::Cyan),
-    );
-
-    let status_line = Line::from(vec![
-        Span::from(" "),
-        shuffle_span,
-        separator.clone(),
-        repeat_span,
-        separator,
-        vol_span,
-    ]);
-
-    frame.render_widget(Paragraph::new(status_line), status_area);
-}
-
-fn draw_progress(frame: &mut Frame, area: Rect, app: &App) {
     let state_icon = match app.player.state {
         PlayState::Playing => "\u{25b6}",
         PlayState::Paused => "\u{2016}",
@@ -381,21 +293,43 @@ fn draw_progress(frame: &mut Frame, area: Rect, app: &App) {
 
     let elapsed = format_time(app.player.position);
     let total = format_time(app.player.duration);
+
+    let mode = if app.player.shuffle {
+        "\u{2921} shuffle"
+    } else {
+        match app.player.repeat {
+            RepeatMode::All => "\u{21bb} repeat all",
+            RepeatMode::One => "\u{21bb} repeat one",
+            RepeatMode::Off => "normal",
+        }
+    };
+
+    let vol = app.player.volume.clamp(0, 100);
+
+    let left = format!(" {state_icon}  {mode}  \u{2502}  vol {vol}%");
+    let right = format!("{elapsed} / {total} ");
+    let w = inner.width as usize;
+    let pad = w.saturating_sub(left.chars().count() + right.chars().count());
+    let full_text = format!("{left}{:pad$}{right}", "");
+
     let ratio = if app.player.duration > 0.0 {
         (app.player.position / app.player.duration).clamp(0.0, 1.0)
     } else {
         0.0
     };
+    let filled = ((w as f64) * ratio).round() as usize;
 
-    let label = format!(" {state_icon}  {elapsed} / {total}");
+    // Split text into filled (progress color) and unfilled portions
+    let chars: Vec<char> = full_text.chars().collect();
+    let filled_str: String = chars[..filled.min(chars.len())].iter().collect();
+    let unfilled_str: String = chars[filled.min(chars.len())..].iter().collect();
 
-    let gauge = Gauge::default()
-        .gauge_style(Style::default().fg(Color::Cyan).bg(Color::DarkGray))
-        .ratio(ratio)
-        .label(label)
-        .use_unicode(true);
+    let line = Line::from(vec![
+        Span::styled(filled_str, Style::default().bg(Color::Cyan).fg(Color::White).bold()),
+        Span::styled(unfilled_str, Style::default().fg(Color::DarkGray)),
+    ]);
 
-    frame.render_widget(gauge, area);
+    frame.render_widget(Paragraph::new(line), inner);
 }
 
 fn format_time(seconds: f64) -> String {

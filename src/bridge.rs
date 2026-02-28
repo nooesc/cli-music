@@ -1,4 +1,4 @@
-use apple_music::{AppleMusic, SongRepeatMode};
+use apple_music::AppleMusic;
 use color_eyre::Result;
 use serde::Deserialize;
 use std::process::Command;
@@ -177,13 +177,60 @@ pub fn set_volume(vol: i8) -> Result<()> {
     Ok(())
 }
 
-/// Toggle shuffle on/off by reading the current state and flipping it.
-pub fn toggle_shuffle() -> Result<()> {
-    let data = AppleMusic::get_application_data().map_err(|e| color_eyre::eyre::eyre!("{e:?}"))?;
-    AppleMusic::set_shuffle(!data.shuffle_enabled)
-        .map_err(|e| color_eyre::eyre::eyre!("{e:?}"))?;
-    Ok(())
+/// Cycle play mode: normal → shuffle → repeat all → repeat one → normal.
+/// Uses the already-polled player state to decide what to set next.
+pub fn cycle_play_mode(player: &PlayerStatus) {
+    let script = if player.shuffle {
+        // shuffle on → turn off shuffle, turn on repeat all
+        r#"
+            var app = Application('Music');
+            app.shuffleEnabled = false;
+            app.songRepeat = 'all';
+        "#.to_string()
+    } else {
+        match player.repeat {
+            RepeatMode::All => {
+                // repeat all → repeat one
+                r#"
+                    var app = Application('Music');
+                    app.songRepeat = 'one';
+                "#.to_string()
+            }
+            RepeatMode::One => {
+                // repeat one → normal (everything off)
+                r#"
+                    var app = Application('Music');
+                    app.songRepeat = 'off';
+                "#.to_string()
+            }
+            RepeatMode::Off => {
+                // normal → shuffle
+                r#"
+                    var app = Application('Music');
+                    app.shuffleEnabled = true;
+                "#.to_string()
+            }
+        }
+    };
+    let _ = Command::new("osascript")
+        .args(["-l", "JavaScript", "-e", &script])
+        .output();
 }
+
+/// Add the currently playing track to the user's library.
+pub fn add_to_library() {
+    let script = r#"
+        var app = Application('Music');
+        if (app.playerState() !== 'stopped') {
+            var t = app.currentTrack;
+            t.favorited = true;
+        }
+    "#;
+    let _ = Command::new("osascript")
+        .args(["-l", "JavaScript", "-e", script])
+        .output();
+}
+
 
 /// Seek to a specific position (in seconds) in the current track.
 pub fn seek_to(position: f64) {
@@ -199,16 +246,4 @@ pub fn seek_to(position: f64) {
     let _ = Command::new("osascript")
         .args(["-l", "JavaScript", "-e", &script])
         .output();
-}
-
-/// Cycle repeat mode: Off -> All -> One -> Off.
-pub fn cycle_repeat() -> Result<()> {
-    let data = AppleMusic::get_application_data().map_err(|e| color_eyre::eyre::eyre!("{e:?}"))?;
-    let next = match data.song_repeat {
-        apple_music::SongRepeat::Off => SongRepeatMode::ALL,
-        apple_music::SongRepeat::All => SongRepeatMode::ONE,
-        apple_music::SongRepeat::One => SongRepeatMode::OFF,
-    };
-    AppleMusic::set_song_repeat_mode(next).map_err(|e| color_eyre::eyre::eyre!("{e:?}"))?;
-    Ok(())
 }

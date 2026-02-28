@@ -119,34 +119,41 @@ fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
 }
 
 fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<AppEvent>) {
-    // Search mode intercepts all keys
+    // Search mode intercepts all keys — live filtering
     if app.search_mode {
         match key.code {
             KeyCode::Enter => {
-                app.search_mode = false;
-                let query = app.search_query.clone();
-                if !query.is_empty() {
-                    app.loading = true;
-                    let tx_bg = tx.clone();
-                    std::thread::spawn(move || {
-                        let tracks = library::search_library(&query).unwrap_or_default();
-                        let _ = tx_bg.send(AppEvent::TracksLoaded(LibraryView::SearchResults, String::new(), tracks));
-                    });
-                }
+                app.confirm_search();
             }
             KeyCode::Esc => {
-                app.search_mode = false;
-                app.search_query.clear();
+                app.cancel_search();
             }
             KeyCode::Backspace => {
                 app.search_query.pop();
+                app.apply_search_filter();
             }
             KeyCode::Char(c) => {
                 app.search_query.push(c);
+                app.apply_search_filter();
             }
             _ => {}
         }
         return;
+    }
+
+    // Shift+arrow: skip tracks via Apple Music native next/prev
+    if key.modifiers.contains(KeyModifiers::SHIFT) {
+        match key.code {
+            KeyCode::Left => {
+                let _ = bridge::previous_track();
+                return;
+            }
+            KeyCode::Right => {
+                let _ = bridge::next_track();
+                return;
+            }
+            _ => {}
+        }
     }
 
     // Library navigation keys (only when Library panel is active)
@@ -192,9 +199,12 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
                             }
                         }
                     }
-                    LibraryView::Tracks | LibraryView::SearchResults => {
+                    LibraryView::Tracks => {
                         if let Some(track) = app.selected_track() {
-                            library::play_track_by_id(track.id);
+                            let id = track.id;
+                            std::thread::spawn(move || {
+                                library::play_track_by_id(id);
+                            });
                         }
                     }
                 }
@@ -203,7 +213,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
             // Left arrow / h / Esc: go back to playlists
             KeyCode::Left | KeyCode::Esc | KeyCode::Char('h') => {
                 match app.view {
-                    LibraryView::Tracks | LibraryView::SearchResults => {
+                    LibraryView::Tracks => {
                         app.view = LibraryView::Playlists;
                         app.tracks.clear();
                         app.track_state.select(None);
@@ -213,8 +223,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
                 return;
             }
             KeyCode::Char('/') => {
-                app.search_mode = true;
-                app.search_query.clear();
+                app.enter_search();
                 return;
             }
             _ => {}
@@ -227,12 +236,6 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
         KeyCode::Char(' ') => {
             let _ = bridge::toggle_playback();
         }
-        KeyCode::Char('n') => {
-            let _ = bridge::next_track();
-        }
-        KeyCode::Char('p') => {
-            let _ = bridge::previous_track();
-        }
         KeyCode::Char('+') | KeyCode::Char('=') => {
             let _ = bridge::set_volume(app.player.volume.saturating_add(5).min(100));
         }
@@ -240,10 +243,17 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
             let _ = bridge::set_volume(app.player.volume.saturating_sub(5).max(0));
         }
         KeyCode::Char('s') => {
-            let _ = bridge::toggle_shuffle();
+            if app.search_query.is_empty() {
+                app.enter_search();
+            } else {
+                app.cancel_search();
+            }
         }
-        KeyCode::Char('r') => {
-            let _ = bridge::cycle_repeat();
+        KeyCode::Char('m') => {
+            bridge::cycle_play_mode(&app.player);
+        }
+        KeyCode::Char('f') => {
+            bridge::add_to_library();
         }
         KeyCode::Left | KeyCode::Char('<') | KeyCode::Char(',') => {
             let new_pos = (app.player.position - 5.0).max(0.0);

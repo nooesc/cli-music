@@ -17,6 +17,9 @@ pub struct App {
     pub search_query: String,
     pub loading: bool,
     pub track_cache: HashMap<String, Vec<TrackEntry>>,
+    // Snapshot of full list before search filtering
+    pub pre_search_playlists: Vec<PlaylistEntry>,
+    pub pre_search_tracks: Vec<TrackEntry>,
     // Artwork
     pub artwork: Option<image::DynamicImage>,
     pub artwork_track: String,
@@ -32,7 +35,6 @@ pub enum Panel {
 pub enum LibraryView {
     Playlists,
     Tracks,
-    SearchResults,
 }
 
 impl Default for App {
@@ -50,6 +52,8 @@ impl Default for App {
             search_query: String::new(),
             loading: false,
             track_cache: HashMap::new(),
+            pre_search_playlists: Vec::new(),
+            pre_search_tracks: Vec::new(),
             artwork: None,
             artwork_track: String::new(),
         }
@@ -74,7 +78,7 @@ impl App {
                 });
                 self.playlist_state.select(Some(i));
             }
-            LibraryView::Tracks | LibraryView::SearchResults => {
+            LibraryView::Tracks => {
                 let len = self.tracks.len();
                 if len == 0 {
                     return;
@@ -100,7 +104,7 @@ impl App {
                 });
                 self.playlist_state.select(Some(i));
             }
-            LibraryView::Tracks | LibraryView::SearchResults => {
+            LibraryView::Tracks => {
                 let len = self.tracks.len();
                 if len == 0 {
                     return;
@@ -126,7 +130,7 @@ impl App {
                 });
                 self.playlist_state.select(Some(i));
             }
-            LibraryView::Tracks | LibraryView::SearchResults => {
+            LibraryView::Tracks => {
                 let len = self.tracks.len();
                 if len == 0 {
                     return;
@@ -152,7 +156,7 @@ impl App {
                 });
                 self.playlist_state.select(Some(i));
             }
-            LibraryView::Tracks | LibraryView::SearchResults => {
+            LibraryView::Tracks => {
                 let len = self.tracks.len();
                 if len == 0 {
                     return;
@@ -161,6 +165,91 @@ impl App {
                     if i == 0 { len - 1 } else { i - 1 }
                 });
                 self.track_state.select(Some(i));
+            }
+        }
+    }
+
+    /// Enter search/filter mode: snapshot the current list.
+    pub fn enter_search(&mut self) {
+        self.search_mode = true;
+        self.search_query.clear();
+        match self.view {
+            LibraryView::Playlists => {
+                self.pre_search_playlists = self.playlists.clone();
+            }
+            LibraryView::Tracks => {
+                self.pre_search_tracks = self.tracks.clone();
+            }
+        }
+    }
+
+    /// Apply the current search query as a live filter.
+    pub fn apply_search_filter(&mut self) {
+        let query = self.search_query.to_lowercase();
+        match self.view {
+            LibraryView::Playlists => {
+                self.playlists = if query.is_empty() {
+                    self.pre_search_playlists.clone()
+                } else {
+                    self.pre_search_playlists
+                        .iter()
+                        .filter(|p| p.name.to_lowercase().contains(&query))
+                        .cloned()
+                        .collect()
+                };
+                self.playlist_state.select(if self.playlists.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                });
+            }
+            LibraryView::Tracks => {
+                self.tracks = if query.is_empty() {
+                    self.pre_search_tracks.clone()
+                } else {
+                    self.pre_search_tracks
+                        .iter()
+                        .filter(|t| {
+                            t.name.to_lowercase().contains(&query)
+                                || t.artist.to_lowercase().contains(&query)
+                        })
+                        .cloned()
+                        .collect()
+                };
+                self.track_state.select(if self.tracks.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                });
+            }
+        }
+    }
+
+    /// Exit search, keeping the filtered results.
+    pub fn confirm_search(&mut self) {
+        self.search_mode = false;
+    }
+
+    /// Cancel search, restoring the full list.
+    pub fn cancel_search(&mut self) {
+        self.search_mode = false;
+        self.search_query.clear();
+        match self.view {
+            LibraryView::Playlists => {
+                self.playlists = std::mem::take(&mut self.pre_search_playlists);
+                self.playlist_state.select(if self.playlists.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                });
+            }
+            LibraryView::Tracks => {
+                self.tracks = std::mem::take(&mut self.pre_search_tracks);
+                self.track_state.select(if self.tracks.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                });
             }
         }
     }
@@ -178,4 +267,5 @@ impl App {
             .selected()
             .and_then(|i| self.tracks.get(i))
     }
+
 }
