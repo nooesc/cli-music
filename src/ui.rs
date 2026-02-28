@@ -20,7 +20,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Header
     let header_line = Line::from(vec![
         Span::from(" cli-music ").bold().cyan(),
-        Span::from("  q:quit  space:play/pause  n/p:next/prev  s:shuffle  r:repeat  /:search").dark_gray(),
+        Span::from("  q:quit  space:play  n/p:track  ,/.:seek  s:shuffle  r:repeat  /:search").dark_gray(),
     ]);
     frame.render_widget(Paragraph::new(header_line), header);
 

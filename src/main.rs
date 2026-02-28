@@ -160,7 +160,8 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
                 app.select_previous();
                 return;
             }
-            KeyCode::Enter => {
+            // Right arrow / Enter / l: drill into playlist or play track
+            KeyCode::Right | KeyCode::Enter | KeyCode::Char('l') => {
                 match app.view {
                     LibraryView::Playlists => {
                         if let Some(playlist) = app.selected_playlist() {
@@ -191,7 +192,8 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
                 }
                 return;
             }
-            KeyCode::Esc => {
+            // Left arrow / h / Esc: go back to playlists
+            KeyCode::Left | KeyCode::Esc | KeyCode::Char('h') => {
                 match app.view {
                     LibraryView::Tracks | LibraryView::SearchResults => {
                         app.view = LibraryView::Playlists;
@@ -235,11 +237,11 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
         KeyCode::Char('r') => {
             let _ = bridge::cycle_repeat();
         }
-        KeyCode::Left => {
+        KeyCode::Left | KeyCode::Char('<') | KeyCode::Char(',') => {
             let new_pos = (app.player.position - 5.0).max(0.0);
             bridge::seek_to(new_pos);
         }
-        KeyCode::Right => {
+        KeyCode::Right | KeyCode::Char('>') | KeyCode::Char('.') => {
             let new_pos = (app.player.position + 5.0).min(app.player.duration);
             bridge::seek_to(new_pos);
         }
