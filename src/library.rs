@@ -104,6 +104,7 @@ pub fn fetch_playlist_tracks(playlist_name: &str) -> Result<Vec<TrackEntry>> {
     var artists = t.artist();
     var albums = t.album();
     var durations = t.duration();
+    var dates = t.dateAdded();
     var result = [];
     for (var i = 0; i < names.length; i++) {{
         result.push({{
@@ -111,9 +112,11 @@ pub fn fetch_playlist_tracks(playlist_name: &str) -> Result<Vec<TrackEntry>> {
             name: names[i],
             artist: artists[i],
             album: albums[i],
-            duration: durations[i]
+            duration: durations[i],
+            dateAdded: dates[i] ? dates[i].toISOString() : ""
         }});
     }}
+    result.sort(function(a, b) {{ return b.dateAdded.localeCompare(a.dateAdded); }});
     return JSON.stringify(result);
 }})()"#,
         escaped
