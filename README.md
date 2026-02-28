@@ -22,7 +22,7 @@ A terminal UI for Apple Music on macOS. Browse your library, control playback, a
 ## Install
 
 ```sh
-git clone https://github.com/coler-j/cli-music.git
+git clone https://github.com/nooesc/cli-music.git
 cd cli-music
 cargo build --release
 ./target/release/cli-music
