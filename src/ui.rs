@@ -7,12 +7,12 @@ use ratatui::{
 };
 
 use crate::app::{App, LibraryView, Panel};
-use crate::bridge::PlayState;
+use crate::bridge::{PlayState, RepeatMode};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let [main_area, bottom_bar] = Layout::vertical([
         Constraint::Fill(1),
-        Constraint::Length(3),
+        Constraint::Length(4),
     ])
     .areas(frame.area());
 
@@ -167,6 +167,17 @@ fn render_library_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut
 }
 
 fn draw_controls(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
+    let block = Block::default().borders(Borders::ALL);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [progress_area, status_area] = Layout::vertical([
+        Constraint::Length(1),
+        Constraint::Length(1),
+    ])
+    .areas(inner);
+
+    // Row 1: Progress bar (no block border)
     let state_icon = match app.player.state {
         PlayState::Playing => "\u{25b6}",
         PlayState::Paused => "\u{23f8}",
@@ -184,13 +195,45 @@ fn draw_controls(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     let label = format!("{state_icon}  {elapsed} / {total}");
 
     let gauge = Gauge::default()
-        .block(Block::default().borders(Borders::ALL))
         .gauge_style(Style::default().fg(Color::Cyan).bg(Color::DarkGray))
         .ratio(ratio)
         .label(label)
         .use_unicode(true);
 
-    frame.render_widget(gauge, area);
+    frame.render_widget(gauge, progress_area);
+
+    // Row 2: Status line (shuffle | repeat | volume)
+    let separator = Span::styled("  |  ", Style::default().fg(Color::DarkGray));
+
+    let shuffle_span = if app.player.shuffle {
+        Span::styled("shuffle on", Style::default().fg(Color::Green))
+    } else {
+        Span::styled("shuffle off", Style::default().fg(Color::DarkGray))
+    };
+
+    let repeat_span = match app.player.repeat {
+        RepeatMode::Off => Span::styled("repeat off", Style::default().fg(Color::DarkGray)),
+        RepeatMode::One => Span::styled("repeat one", Style::default().fg(Color::Green)),
+        RepeatMode::All => Span::styled("repeat all", Style::default().fg(Color::Green)),
+    };
+
+    let vol_level = ((app.player.volume as f64 / 100.0) * 10.0).round() as usize;
+    let vol_filled = "#".repeat(vol_level);
+    let vol_empty = "-".repeat(10 - vol_level);
+    let vol_span = Span::styled(
+        format!("vol {vol_filled}{vol_empty}"),
+        Style::default().fg(Color::Cyan),
+    );
+
+    let status_line = Line::from(vec![
+        shuffle_span,
+        separator.clone(),
+        repeat_span,
+        separator,
+        vol_span,
+    ]);
+
+    frame.render_widget(Paragraph::new(status_line), status_area);
 }
 
 fn format_time(seconds: f64) -> String {

@@ -189,6 +189,14 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('r') => {
             let _ = bridge::cycle_repeat();
         }
+        KeyCode::Left => {
+            let new_pos = (app.player.position - 5.0).max(0.0);
+            bridge::seek_to(new_pos);
+        }
+        KeyCode::Right => {
+            let new_pos = (app.player.position + 5.0).min(app.player.duration);
+            bridge::seek_to(new_pos);
+        }
         KeyCode::Char('1') => app.active_panel = Panel::NowPlaying,
         KeyCode::Char('2') => app.active_panel = Panel::Library,
         KeyCode::Tab => {

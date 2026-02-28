@@ -185,6 +185,22 @@ pub fn toggle_shuffle() -> Result<()> {
     Ok(())
 }
 
+/// Seek to a specific position (in seconds) in the current track.
+pub fn seek_to(position: f64) {
+    let script = format!(
+        r#"
+        var Music = Application("Music");
+        if (Music.playerState() === "playing") {{
+            Music.playerPosition = {};
+        }}
+        "#,
+        position
+    );
+    let _ = Command::new("osascript")
+        .args(["-l", "JavaScript", "-e", &script])
+        .output();
+}
+
 /// Cycle repeat mode: Off -> All -> One -> Off.
 pub fn cycle_repeat() -> Result<()> {
     let data = AppleMusic::get_application_data().map_err(|e| color_eyre::eyre::eyre!("{e:?}"))?;
