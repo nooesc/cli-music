@@ -61,7 +61,33 @@ impl App {
         self.player = status;
     }
 
-    /// Move selection down in the current list.
+    /// Move selection down by `n` in the current list.
+    pub fn select_next_by(&mut self, n: usize) {
+        match self.view {
+            LibraryView::Playlists => {
+                let len = self.playlists.len();
+                if len == 0 {
+                    return;
+                }
+                let i = self.playlist_state.selected().map_or(0, |i| {
+                    if i + n >= len { len - 1 } else { i + n }
+                });
+                self.playlist_state.select(Some(i));
+            }
+            LibraryView::Tracks | LibraryView::SearchResults => {
+                let len = self.tracks.len();
+                if len == 0 {
+                    return;
+                }
+                let i = self.track_state.selected().map_or(0, |i| {
+                    if i + n >= len { len - 1 } else { i + n }
+                });
+                self.track_state.select(Some(i));
+            }
+        }
+    }
+
+    /// Move selection down by 1, wrapping.
     pub fn select_next(&mut self) {
         match self.view {
             LibraryView::Playlists => {
@@ -87,7 +113,33 @@ impl App {
         }
     }
 
-    /// Move selection up in the current list.
+    /// Move selection up by `n` in the current list.
+    pub fn select_previous_by(&mut self, n: usize) {
+        match self.view {
+            LibraryView::Playlists => {
+                let len = self.playlists.len();
+                if len == 0 {
+                    return;
+                }
+                let i = self.playlist_state.selected().map_or(0, |i| {
+                    i.saturating_sub(n)
+                });
+                self.playlist_state.select(Some(i));
+            }
+            LibraryView::Tracks | LibraryView::SearchResults => {
+                let len = self.tracks.len();
+                if len == 0 {
+                    return;
+                }
+                let i = self.track_state.selected().map_or(0, |i| {
+                    i.saturating_sub(n)
+                });
+                self.track_state.select(Some(i));
+            }
+        }
+    }
+
+    /// Move selection up by 1, wrapping.
     pub fn select_previous(&mut self) {
         match self.view {
             LibraryView::Playlists => {

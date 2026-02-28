@@ -7,7 +7,7 @@ mod ui;
 use app::{App, LibraryView, Panel};
 use bridge::PlayerStatus;
 use color_eyre::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -152,6 +152,14 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
     // Library navigation keys (only when Library panel is active)
     if app.active_panel == Panel::Library {
         match key.code {
+            KeyCode::Char('J') | KeyCode::Down if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                app.select_next_by(5);
+                return;
+            }
+            KeyCode::Char('K') | KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                app.select_previous_by(5);
+                return;
+            }
             KeyCode::Char('j') | KeyCode::Down => {
                 app.select_next();
                 return;
