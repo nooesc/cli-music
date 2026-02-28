@@ -1,15 +1,15 @@
 use ratatui::{
     layout::{Constraint, Layout},
-    style::{Color, Style, Stylize},
+    style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, Paragraph},
+    widgets::{Block, Borders, Gauge, List, ListItem, Paragraph},
     Frame,
 };
 
-use crate::app::{App, Panel};
+use crate::app::{App, LibraryView, Panel};
 use crate::bridge::PlayState;
 
-pub fn draw(frame: &mut Frame, app: &App) {
+pub fn draw(frame: &mut Frame, app: &mut App) {
     let [main_area, bottom_bar] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(3),
@@ -63,25 +63,88 @@ fn draw_now_playing(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
     frame.render_widget(Paragraph::new(text), inner);
 }
 
-fn draw_library(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
+fn draw_library(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut App) {
     let border_style = if app.active_panel == Panel::Library {
         Style::default().fg(Color::Cyan)
     } else {
         Style::default().fg(Color::DarkGray)
     };
 
+    let title = match app.view {
+        LibraryView::Playlists => " Playlists ",
+        LibraryView::Tracks => " Tracks ",
+        LibraryView::SearchResults => " Search Results ",
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(border_style)
-        .title(" Library ");
+        .title(title);
 
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    // If search mode is active, split the library area to show a search bar at the bottom.
+    if app.search_mode {
+        let [list_area, search_area] = Layout::vertical([
+            Constraint::Fill(1),
+            Constraint::Length(1),
+        ])
+        .areas(block.inner(area));
 
-    frame.render_widget(
-        Paragraph::new("Playlists will go here").dark_gray(),
-        inner,
-    );
+        frame.render_widget(block, area);
+
+        render_library_list(frame, list_area, app);
+
+        let search_line = Line::from(Span::styled(
+            format!("/{}", app.search_query),
+            Style::default().fg(Color::Yellow),
+        ));
+        frame.render_widget(Paragraph::new(search_line), search_area);
+    } else {
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        render_library_list(frame, inner, app);
+    }
+}
+
+fn render_library_list(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut App) {
+    let highlight_style = Style::default()
+        .bg(Color::Cyan)
+        .fg(Color::Black)
+        .add_modifier(Modifier::BOLD);
+
+    match app.view {
+        LibraryView::Playlists => {
+            let items: Vec<ListItem> = app
+                .playlists
+                .iter()
+                .map(|p| ListItem::new(Line::from(p.name.clone())))
+                .collect();
+
+            let list = List::new(items)
+                .highlight_style(highlight_style)
+                .highlight_symbol("\u{25b6} ");
+
+            frame.render_stateful_widget(list, area, &mut app.playlist_state);
+        }
+        LibraryView::Tracks | LibraryView::SearchResults => {
+            let items: Vec<ListItem> = app
+                .tracks
+                .iter()
+                .map(|t| {
+                    ListItem::new(Line::from(vec![
+                        Span::styled(t.name.clone(), Style::default().fg(Color::White)),
+                        Span::styled(" - ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(t.artist.clone(), Style::default().fg(Color::Cyan)),
+                    ]))
+                })
+                .collect();
+
+            let list = List::new(items)
+                .highlight_style(highlight_style)
+                .highlight_symbol("\u{25b6} ");
+
+            frame.render_stateful_widget(list, area, &mut app.track_state);
+        }
+    }
 }
 
 fn draw_controls(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {

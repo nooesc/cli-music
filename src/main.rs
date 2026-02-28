@@ -1,8 +1,9 @@
 mod app;
 mod bridge;
+mod library;
 mod ui;
 
-use app::App;
+use app::{App, LibraryView, Panel};
 use bridge::PlayerStatus;
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind};
@@ -27,6 +28,13 @@ fn main() -> Result<()> {
 
 fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
     let mut app = App::default();
+
+    // Load playlists on startup
+    app.playlists = library::fetch_playlists().unwrap_or_default();
+    if !app.playlists.is_empty() {
+        app.playlist_state.select(Some(0));
+    }
+
     let (tx, rx) = mpsc::channel();
 
     // Input thread
@@ -54,7 +62,7 @@ fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
     });
 
     loop {
-        terminal.draw(|frame| ui::draw(frame, &app))?;
+        terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
         match rx.recv()? {
             AppEvent::Key(key) => handle_key(&mut app, key),
@@ -71,6 +79,92 @@ fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
 }
 
 fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    // Search mode intercepts all keys
+    if app.search_mode {
+        match key.code {
+            KeyCode::Enter => {
+                app.search_mode = false;
+                let query = app.search_query.clone();
+                if !query.is_empty() {
+                    app.tracks = library::search_library(&query).unwrap_or_default();
+                    app.track_state.select(if app.tracks.is_empty() {
+                        None
+                    } else {
+                        Some(0)
+                    });
+                    app.view = LibraryView::SearchResults;
+                }
+            }
+            KeyCode::Esc => {
+                app.search_mode = false;
+                app.search_query.clear();
+            }
+            KeyCode::Backspace => {
+                app.search_query.pop();
+            }
+            KeyCode::Char(c) => {
+                app.search_query.push(c);
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Library navigation keys (only when Library panel is active)
+    if app.active_panel == Panel::Library {
+        match key.code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                app.select_next();
+                return;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                app.select_previous();
+                return;
+            }
+            KeyCode::Enter => {
+                match app.view {
+                    LibraryView::Playlists => {
+                        if let Some(playlist) = app.selected_playlist() {
+                            let name = playlist.name.clone();
+                            app.tracks =
+                                library::fetch_playlist_tracks(&name).unwrap_or_default();
+                            app.track_state.select(if app.tracks.is_empty() {
+                                None
+                            } else {
+                                Some(0)
+                            });
+                            app.view = LibraryView::Tracks;
+                        }
+                    }
+                    LibraryView::Tracks | LibraryView::SearchResults => {
+                        if let Some(track) = app.selected_track() {
+                            library::play_track_by_id(track.id);
+                        }
+                    }
+                }
+                return;
+            }
+            KeyCode::Esc => {
+                match app.view {
+                    LibraryView::Tracks | LibraryView::SearchResults => {
+                        app.view = LibraryView::Playlists;
+                        app.tracks.clear();
+                        app.track_state.select(None);
+                    }
+                    LibraryView::Playlists => {}
+                }
+                return;
+            }
+            KeyCode::Char('/') => {
+                app.search_mode = true;
+                app.search_query.clear();
+                return;
+            }
+            _ => {}
+        }
+    }
+
+    // Global keys
     match key.code {
         KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Char(' ') => {
@@ -94,12 +188,12 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Char('r') => {
             let _ = bridge::cycle_repeat();
         }
-        KeyCode::Char('1') => app.active_panel = app::Panel::NowPlaying,
-        KeyCode::Char('2') => app.active_panel = app::Panel::Library,
+        KeyCode::Char('1') => app.active_panel = Panel::NowPlaying,
+        KeyCode::Char('2') => app.active_panel = Panel::Library,
         KeyCode::Tab => {
             app.active_panel = match app.active_panel {
-                app::Panel::NowPlaying => app::Panel::Library,
-                app::Panel::Library => app::Panel::NowPlaying,
+                Panel::NowPlaying => Panel::Library,
+                Panel::Library => Panel::NowPlaying,
             };
         }
         _ => {}
