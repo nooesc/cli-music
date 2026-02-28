@@ -16,7 +16,7 @@ enum AppEvent {
     Key(crossterm::event::KeyEvent),
     Tick,
     PlayerUpdate(PlayerStatus),
-    ArtworkLoaded(Option<image::DynamicImage>),
+    ArtworkLoaded(String, Option<image::DynamicImage>),
 }
 
 fn main() -> Result<()> {
@@ -83,14 +83,16 @@ fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
                     thread::spawn(move || {
                         let img = artwork::fetch_artwork_url(&track_name, &artist)
                             .and_then(|url| artwork::download_image(&url));
-                        let _ = tx_art.send(AppEvent::ArtworkLoaded(img));
+                        let _ = tx_art.send(AppEvent::ArtworkLoaded(track_name, img));
                     });
                 }
 
                 app.update_player_status(status);
             }
-            AppEvent::ArtworkLoaded(img) => {
-                app.artwork = img;
+            AppEvent::ArtworkLoaded(track, img) => {
+                if track == app.artwork_track {
+                    app.artwork = img;
+                }
             }
         }
 
@@ -201,10 +203,10 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
             let _ = bridge::previous_track();
         }
         KeyCode::Char('+') | KeyCode::Char('=') => {
-            let _ = bridge::set_volume((app.player.volume + 5).min(100));
+            let _ = bridge::set_volume(app.player.volume.saturating_add(5).min(100));
         }
         KeyCode::Char('-') => {
-            let _ = bridge::set_volume((app.player.volume - 5).max(0));
+            let _ = bridge::set_volume(app.player.volume.saturating_sub(5).max(0));
         }
         KeyCode::Char('s') => {
             let _ = bridge::toggle_shuffle();

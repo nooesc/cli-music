@@ -190,7 +190,7 @@ pub fn seek_to(position: f64) {
     let script = format!(
         r#"
         var Music = Application("Music");
-        if (Music.playerState() === "playing") {{
+        if (Music.playerState() !== "stopped") {{
             Music.playerPosition = {};
         }}
         "#,

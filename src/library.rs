@@ -42,7 +42,11 @@ struct RawTrack {
 // ---------------------------------------------------------------------------
 
 fn escape_js(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\0', "")
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +162,7 @@ pub fn search_library(query: &str) -> Result<Vec<TrackEntry>> {
         r#"
 (function() {{
     var app = Application('Music');
-    var library = app.playlists.whose({{specialKind: "Library"}});
+    var library = app.playlists.whose({{name: "Library"}});
     var results = library[0].search({{for: "{}"}});
     if (!results) return JSON.stringify([]);
     var cap = Math.min(results.length, 200);

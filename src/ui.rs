@@ -225,7 +225,7 @@ fn draw_controls(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         RepeatMode::All => Span::styled("repeat all", Style::default().fg(Color::Green)),
     };
 
-    let vol_level = ((app.player.volume as f64 / 100.0) * 10.0).round() as usize;
+    let vol_level = ((app.player.volume.clamp(0, 100) as f64 / 100.0) * 10.0).round() as usize;
     let vol_filled = "#".repeat(vol_level);
     let vol_empty = "-".repeat(10 - vol_level);
     let vol_span = Span::styled(
