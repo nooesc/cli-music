@@ -42,6 +42,7 @@ cargo build --release
 | `s` or `/` | Search / filter (press again to clear) |
 | `m` | Cycle mode: normal > shuffle > repeat all > repeat one |
 | `f` | Save current track to library |
-| `+/-` | Volume up / down |
+| `+/-` | Volume up / down (Shift for ±20) |
+| `n` | Toggle mini-player mode |
 | `Tab` or `1/2` | Switch panels |
 | `q` | Quit |
