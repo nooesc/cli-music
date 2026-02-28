@@ -254,6 +254,8 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
         }
         KeyCode::Char('f') => {
             bridge::add_to_library();
+            // Invalidate Library cache so the saved track shows up
+            app.track_cache.remove("Library");
         }
         KeyCode::Left | KeyCode::Char('<') | KeyCode::Char(',') => {
             let new_pos = (app.player.position - 5.0).max(0.0);
