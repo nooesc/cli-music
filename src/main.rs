@@ -237,10 +237,12 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
             let _ = bridge::toggle_playback();
         }
         KeyCode::Char('+') | KeyCode::Char('=') => {
-            let _ = bridge::set_volume(app.player.volume.saturating_add(5).min(100));
+            let step = if key.modifiers.contains(KeyModifiers::SHIFT) { 20 } else { 5 };
+            let _ = bridge::set_volume(app.player.volume.saturating_add(step).min(100));
         }
         KeyCode::Char('-') => {
-            let _ = bridge::set_volume(app.player.volume.saturating_sub(5).max(0));
+            let step = if key.modifiers.contains(KeyModifiers::SHIFT) { 20 } else { 5 };
+            let _ = bridge::set_volume(app.player.volume.saturating_sub(step).max(0));
         }
         KeyCode::Char('s') => {
             if app.search_query.is_empty() {
