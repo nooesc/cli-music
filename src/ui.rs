@@ -283,10 +283,11 @@ fn render_library_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     ];
 
                     if show_album {
-                        // Truncate album if needed
+                        // Truncate album if needed (char-safe)
                         let max_album = 20;
-                        let album_display = if t.album.len() > max_album {
-                            format!("{}...", &t.album[..max_album - 3])
+                        let album_display: String = if t.album.chars().count() > max_album {
+                            let truncated: String = t.album.chars().take(max_album - 3).collect();
+                            format!("{truncated}...")
                         } else {
                             t.album.clone()
                         };
