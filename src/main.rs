@@ -252,6 +252,9 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
         KeyCode::Char('m') => {
             bridge::cycle_play_mode(&app.player);
         }
+        KeyCode::Char('n') => {
+            app.mini_player = !app.mini_player;
+        }
         KeyCode::Char('f') => {
             bridge::add_to_library();
             // Invalidate Library cache so the saved track shows up

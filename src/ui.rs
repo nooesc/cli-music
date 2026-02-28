@@ -24,7 +24,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     draw_header(frame, header, app);
 
-    if show_now_playing {
+    if app.mini_player {
+        // Mini-player: full-width now playing, no library
+        draw_now_playing(frame, main_area, app);
+    } else if show_now_playing {
         // Responsive split: narrower left panel on smaller terminals
         let left_pct = if width >= 120 { 35 } else if width >= 80 { 40 } else { 45 };
         let [left_panel, right_panel] = Layout::horizontal([
@@ -55,7 +58,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         PlayState::Playing => "space:pause",
         _ => "space:play",
     };
-    let hints = format!("  {play_hint}  S-\u{2190}/\u{2192}:track  m:mode  s:search  f:save");
+    let hints = format!("  {play_hint}  S-\u{2190}/\u{2192}:track  m:mode  s:search  f:save  n:mini");
     if width > 50 {
         spans.push(Span::from(hints).dark_gray());
     }

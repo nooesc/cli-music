@@ -23,6 +23,8 @@ pub struct App {
     // Artwork
     pub artwork: Option<image::DynamicImage>,
     pub artwork_track: String,
+    // Mini-player mode: hide library, show only now playing
+    pub mini_player: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -56,6 +58,7 @@ impl Default for App {
             pre_search_tracks: Vec::new(),
             artwork: None,
             artwork_track: String::new(),
+            mini_player: false,
         }
     }
 }
