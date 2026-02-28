@@ -87,7 +87,10 @@ pub fn fetch_playlists() -> Result<Vec<PlaylistEntry>> {
         .collect())
 }
 
-/// Fetch tracks from a named playlist (capped at 500).
+/// Fetch tracks from a named playlist using batch property access.
+/// Instead of calling .name(), .artist(), etc. on each track individually
+/// (which is one Apple Event per call), we grab all values in bulk arrays.
+/// This reduces thousands of IPC roundtrips to just 5.
 pub fn fetch_playlist_tracks(playlist_name: &str) -> Result<Vec<TrackEntry>> {
     let escaped = escape_js(playlist_name);
     let script = format!(
@@ -95,17 +98,20 @@ pub fn fetch_playlist_tracks(playlist_name: &str) -> Result<Vec<TrackEntry>> {
 (function() {{
     var app = Application('Music');
     var pl = app.playlists.byName("{}");
-    var tracks = pl.tracks();
-    var cap = Math.min(tracks.length, 500);
+    var t = pl.tracks;
+    var ids = t.id();
+    var names = t.name();
+    var artists = t.artist();
+    var albums = t.album();
+    var durations = t.duration();
     var result = [];
-    for (var i = 0; i < cap; i++) {{
-        var t = tracks[i];
+    for (var i = 0; i < names.length; i++) {{
         result.push({{
-            id:       t.id(),
-            name:     t.name(),
-            artist:   t.artist(),
-            album:    t.album(),
-            duration: t.duration()
+            id: ids[i],
+            name: names[i],
+            artist: artists[i],
+            album: albums[i],
+            duration: durations[i]
         }});
     }}
     return JSON.stringify(result);
@@ -156,6 +162,8 @@ pub fn play_track_by_id(track_id: i32) {
 }
 
 /// Search the main Library playlist (capped at 200 results).
+/// Uses individual property access since search() returns a plain array,
+/// not a specifier that supports batch access.
 pub fn search_library(query: &str) -> Result<Vec<TrackEntry>> {
     let escaped = escape_js(query);
     let script = format!(
@@ -168,14 +176,16 @@ pub fn search_library(query: &str) -> Result<Vec<TrackEntry>> {
     var cap = Math.min(results.length, 200);
     var out = [];
     for (var i = 0; i < cap; i++) {{
-        var t = results[i];
-        out.push({{
-            id:       t.id(),
-            name:     t.name(),
-            artist:   t.artist(),
-            album:    t.album(),
-            duration: t.duration()
-        }});
+        try {{
+            var t = results[i];
+            out.push({{
+                id:       t.id(),
+                name:     t.name(),
+                artist:   t.artist(),
+                album:    t.album(),
+                duration: t.duration()
+            }});
+        }} catch(e) {{}}
     }}
     return JSON.stringify(out);
 }})()"#,

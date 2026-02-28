@@ -1,6 +1,7 @@
 use crate::bridge::PlayerStatus;
 use crate::library::{PlaylistEntry, TrackEntry};
 use ratatui::widgets::ListState;
+use std::collections::HashMap;
 
 pub struct App {
     pub should_quit: bool,
@@ -15,6 +16,7 @@ pub struct App {
     pub search_mode: bool,
     pub search_query: String,
     pub loading: bool,
+    pub track_cache: HashMap<String, Vec<TrackEntry>>,
     // Artwork
     pub artwork: Option<image::DynamicImage>,
     pub artwork_track: String,
@@ -47,6 +49,7 @@ impl Default for App {
             search_mode: false,
             search_query: String::new(),
             loading: false,
+            track_cache: HashMap::new(),
             artwork: None,
             artwork_track: String::new(),
         }

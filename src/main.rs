@@ -16,7 +16,7 @@ enum AppEvent {
     Key(crossterm::event::KeyEvent),
     Tick,
     PlayerUpdate(PlayerStatus),
-    TracksLoaded(LibraryView, Vec<library::TrackEntry>),
+    TracksLoaded(LibraryView, String, Vec<library::TrackEntry>),
     ArtworkLoaded(String, Option<image::DynamicImage>),
 }
 
@@ -90,8 +90,11 @@ fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
 
                 app.update_player_status(status);
             }
-            AppEvent::TracksLoaded(view, tracks) => {
+            AppEvent::TracksLoaded(view, cache_key, tracks) => {
                 app.loading = false;
+                if !cache_key.is_empty() {
+                    app.track_cache.insert(cache_key, tracks.clone());
+                }
                 app.tracks = tracks;
                 app.track_state.select(if app.tracks.is_empty() {
                     None
@@ -127,7 +130,7 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
                     let tx_bg = tx.clone();
                     std::thread::spawn(move || {
                         let tracks = library::search_library(&query).unwrap_or_default();
-                        let _ = tx_bg.send(AppEvent::TracksLoaded(LibraryView::SearchResults, tracks));
+                        let _ = tx_bg.send(AppEvent::TracksLoaded(LibraryView::SearchResults, String::new(), tracks));
                     });
                 }
             }
@@ -162,12 +165,22 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
                     LibraryView::Playlists => {
                         if let Some(playlist) = app.selected_playlist() {
                             let name = playlist.name.clone();
-                            app.loading = true;
-                            let tx_bg = tx.clone();
-                            std::thread::spawn(move || {
-                                let tracks = library::fetch_playlist_tracks(&name).unwrap_or_default();
-                                let _ = tx_bg.send(AppEvent::TracksLoaded(LibraryView::Tracks, tracks));
-                            });
+                            if let Some(cached) = app.track_cache.get(&name) {
+                                app.tracks = cached.clone();
+                                app.track_state.select(if app.tracks.is_empty() {
+                                    None
+                                } else {
+                                    Some(0)
+                                });
+                                app.view = LibraryView::Tracks;
+                            } else {
+                                app.loading = true;
+                                let tx_bg = tx.clone();
+                                std::thread::spawn(move || {
+                                    let tracks = library::fetch_playlist_tracks(&name).unwrap_or_default();
+                                    let _ = tx_bg.send(AppEvent::TracksLoaded(LibraryView::Tracks, name, tracks));
+                                });
+                            }
                         }
                     }
                     LibraryView::Tracks | LibraryView::SearchResults => {
