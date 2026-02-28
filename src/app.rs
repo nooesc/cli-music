@@ -52,21 +52,8 @@ impl Default for App {
 }
 
 impl App {
-    pub fn update_player(&mut self, status: PlayerStatus) {
-        let track_changed = status.track_name != self.artwork_track;
+    pub fn update_player_status(&mut self, status: PlayerStatus) {
         self.player = status;
-
-        if track_changed && !self.player.track_name.is_empty() {
-            self.artwork_track = self.player.track_name.clone();
-            if let Some(url) = crate::artwork::fetch_artwork_url(
-                &self.player.track_name,
-                &self.player.artist,
-            ) {
-                self.artwork = crate::artwork::download_image(&url);
-            } else {
-                self.artwork = None;
-            }
-        }
     }
 
     /// Move selection down in the current list.

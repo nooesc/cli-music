@@ -16,6 +16,7 @@ enum AppEvent {
     Key(crossterm::event::KeyEvent),
     Tick,
     PlayerUpdate(PlayerStatus),
+    ArtworkLoaded(Option<image::DynamicImage>),
 }
 
 fn main() -> Result<()> {
@@ -68,7 +69,29 @@ fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
         match rx.recv()? {
             AppEvent::Key(key) => handle_key(&mut app, key),
             AppEvent::Tick => {}
-            AppEvent::PlayerUpdate(status) => app.update_player(status),
+            AppEvent::PlayerUpdate(status) => {
+                let track_changed =
+                    status.track_name != app.artwork_track && !status.track_name.is_empty();
+
+                if track_changed {
+                    app.artwork_track = status.track_name.clone();
+                    app.artwork = None;
+
+                    let track_name = status.track_name.clone();
+                    let artist = status.artist.clone();
+                    let tx_art = tx.clone();
+                    thread::spawn(move || {
+                        let img = artwork::fetch_artwork_url(&track_name, &artist)
+                            .and_then(|url| artwork::download_image(&url));
+                        let _ = tx_art.send(AppEvent::ArtworkLoaded(img));
+                    });
+                }
+
+                app.update_player_status(status);
+            }
+            AppEvent::ArtworkLoaded(img) => {
+                app.artwork = img;
+            }
         }
 
         if app.should_quit {

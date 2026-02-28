@@ -10,11 +10,19 @@ use crate::app::{App, LibraryView, Panel};
 use crate::bridge::{PlayState, RepeatMode};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let [main_area, bottom_bar] = Layout::vertical([
+    let [header, main_area, bottom_bar] = Layout::vertical([
+        Constraint::Length(1),
         Constraint::Fill(1),
         Constraint::Length(4),
     ])
     .areas(frame.area());
+
+    // Header
+    let header_line = Line::from(vec![
+        Span::from(" cli-music ").bold().cyan(),
+        Span::from("  q:quit  space:play/pause  n/p:next/prev  s:shuffle  r:repeat  /:search").dark_gray(),
+    ]);
+    frame.render_widget(Paragraph::new(header_line), header);
 
     let [left_panel, right_panel] = Layout::horizontal([
         Constraint::Percentage(40),
