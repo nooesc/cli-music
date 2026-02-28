@@ -14,6 +14,7 @@ pub struct App {
     pub view: LibraryView,
     pub search_mode: bool,
     pub search_query: String,
+    pub loading: bool,
     // Artwork
     pub artwork: Option<image::DynamicImage>,
     pub artwork_track: String,
@@ -45,6 +46,7 @@ impl Default for App {
             view: LibraryView::Playlists,
             search_mode: false,
             search_query: String::new(),
+            loading: false,
             artwork: None,
             artwork_track: String::new(),
         }

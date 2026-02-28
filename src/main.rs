@@ -16,6 +16,7 @@ enum AppEvent {
     Key(crossterm::event::KeyEvent),
     Tick,
     PlayerUpdate(PlayerStatus),
+    TracksLoaded(LibraryView, Vec<library::TrackEntry>),
     ArtworkLoaded(String, Option<image::DynamicImage>),
 }
 
@@ -67,7 +68,7 @@ fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
         match rx.recv()? {
-            AppEvent::Key(key) => handle_key(&mut app, key),
+            AppEvent::Key(key) => handle_key(&mut app, key, &tx),
             AppEvent::Tick => {}
             AppEvent::PlayerUpdate(status) => {
                 let track_changed =
@@ -89,6 +90,16 @@ fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
 
                 app.update_player_status(status);
             }
+            AppEvent::TracksLoaded(view, tracks) => {
+                app.loading = false;
+                app.tracks = tracks;
+                app.track_state.select(if app.tracks.is_empty() {
+                    None
+                } else {
+                    Some(0)
+                });
+                app.view = view;
+            }
             AppEvent::ArtworkLoaded(track, img) => {
                 if track == app.artwork_track {
                     app.artwork = img;
@@ -104,7 +115,7 @@ fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
     Ok(())
 }
 
-fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
+fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<AppEvent>) {
     // Search mode intercepts all keys
     if app.search_mode {
         match key.code {
@@ -112,13 +123,12 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 app.search_mode = false;
                 let query = app.search_query.clone();
                 if !query.is_empty() {
-                    app.tracks = library::search_library(&query).unwrap_or_default();
-                    app.track_state.select(if app.tracks.is_empty() {
-                        None
-                    } else {
-                        Some(0)
+                    app.loading = true;
+                    let tx_bg = tx.clone();
+                    std::thread::spawn(move || {
+                        let tracks = library::search_library(&query).unwrap_or_default();
+                        let _ = tx_bg.send(AppEvent::TracksLoaded(LibraryView::SearchResults, tracks));
                     });
-                    app.view = LibraryView::SearchResults;
                 }
             }
             KeyCode::Esc => {
@@ -152,14 +162,12 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) {
                     LibraryView::Playlists => {
                         if let Some(playlist) = app.selected_playlist() {
                             let name = playlist.name.clone();
-                            app.tracks =
-                                library::fetch_playlist_tracks(&name).unwrap_or_default();
-                            app.track_state.select(if app.tracks.is_empty() {
-                                None
-                            } else {
-                                Some(0)
+                            app.loading = true;
+                            let tx_bg = tx.clone();
+                            std::thread::spawn(move || {
+                                let tracks = library::fetch_playlist_tracks(&name).unwrap_or_default();
+                                let _ = tx_bg.send(AppEvent::TracksLoaded(LibraryView::Tracks, tracks));
                             });
-                            app.view = LibraryView::Tracks;
                         }
                     }
                     LibraryView::Tracks | LibraryView::SearchResults => {

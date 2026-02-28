@@ -108,6 +108,18 @@ fn draw_library(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut App) {
         .border_style(border_style)
         .title(title);
 
+    if app.loading {
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        frame.render_widget(
+            Paragraph::new("Loading...")
+                .style(Style::default().fg(Color::Yellow))
+                .alignment(ratatui::layout::Alignment::Center),
+            inner,
+        );
+        return;
+    }
+
     // If search mode is active, split the library area to show a search bar at the bottom.
     if app.search_mode {
         let [list_area, search_area] = Layout::vertical([
