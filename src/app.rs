@@ -14,6 +14,9 @@ pub struct App {
     pub view: LibraryView,
     pub search_mode: bool,
     pub search_query: String,
+    // Artwork
+    pub artwork: Option<image::DynamicImage>,
+    pub artwork_track: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -42,13 +45,28 @@ impl Default for App {
             view: LibraryView::Playlists,
             search_mode: false,
             search_query: String::new(),
+            artwork: None,
+            artwork_track: String::new(),
         }
     }
 }
 
 impl App {
     pub fn update_player(&mut self, status: PlayerStatus) {
+        let track_changed = status.track_name != self.artwork_track;
         self.player = status;
+
+        if track_changed && !self.player.track_name.is_empty() {
+            self.artwork_track = self.player.track_name.clone();
+            if let Some(url) = crate::artwork::fetch_artwork_url(
+                &self.player.track_name,
+                &self.player.artist,
+            ) {
+                self.artwork = crate::artwork::download_image(&url);
+            } else {
+                self.artwork = None;
+            }
+        }
     }
 
     /// Move selection down in the current list.

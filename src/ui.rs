@@ -50,8 +50,27 @@ fn draw_now_playing(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         return;
     }
 
-    let text = vec![
-        Line::from(""),
+    // Split inner area: artwork on top, track info (3 rows) at bottom
+    let info_height = 3u16;
+    let [art_area, info_area] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(info_height),
+    ])
+    .areas(inner);
+
+    // Render artwork
+    if let Some(ref img) = app.artwork {
+        let lines = crate::artwork::image_to_halfblocks(img, art_area.width, art_area.height);
+        frame.render_widget(Paragraph::new(lines), art_area);
+    } else {
+        let no_art = Paragraph::new("No artwork")
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(ratatui::layout::Alignment::Center);
+        frame.render_widget(no_art, art_area);
+    }
+
+    // Render track info
+    let info_text = vec![
         Line::from(Span::from(app.player.track_name.clone()).bold().white()),
         Line::from(vec![
             Span::from(app.player.artist.clone()).cyan(),
@@ -60,7 +79,7 @@ fn draw_now_playing(frame: &mut Frame, area: ratatui::layout::Rect, app: &App) {
         ]),
     ];
 
-    frame.render_widget(Paragraph::new(text), inner);
+    frame.render_widget(Paragraph::new(info_text), info_area);
 }
 
 fn draw_library(frame: &mut Frame, area: ratatui::layout::Rect, app: &mut App) {

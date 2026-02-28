@@ -1,4 +1,5 @@
 mod app;
+mod artwork;
 mod bridge;
 mod library;
 mod ui;
