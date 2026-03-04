@@ -1,6 +1,7 @@
 mod audio;
 mod event_tap;
 mod hud;
+mod login_item;
 
 use event_tap::VolumeKey;
 use objc2::MainThreadMarker;
@@ -16,6 +17,24 @@ const HUD_DISPLAY_DURATION: f64 = 1.5;
 const POLL_INTERVAL: f64 = 0.05;
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 {
+        match args[1].as_str() {
+            "install" => {
+                login_item::install().unwrap_or_else(|e| eprintln!("Error: {e}"));
+                return;
+            }
+            "uninstall" => {
+                login_item::uninstall().unwrap_or_else(|e| eprintln!("Error: {e}"));
+                return;
+            }
+            _ => {
+                eprintln!("Usage: cli-music-hud [install|uninstall]");
+                return;
+            }
+        }
+    }
+
     // We must be on the main thread for NSApplication / NSWindow.
     let mtm = MainThreadMarker::new()
         .expect("cli-music-hud must be launched on the main thread");
