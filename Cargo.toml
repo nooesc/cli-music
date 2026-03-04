@@ -1,3 +1,6 @@
+[workspace]
+members = [".", "cli-music-hud"]
+
 [package]
 name = "cli-music"
 version = "0.1.0"

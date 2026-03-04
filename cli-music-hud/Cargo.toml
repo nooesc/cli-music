@@ -1,0 +1,11 @@
+[package]
+name = "cli-music-hud"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSThread", "NSString", "NSRunLoop", "NSTimer", "NSGeometry", "NSNotification"] }
+objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSWindow", "NSView", "NSColor", "NSGraphicsContext", "NSVisualEffectView", "NSScreen", "NSEvent", "NSRunningApplication", "NSResponder", "NSBezierPath", "NSText", "NSFont", "NSImage", "NSImageRep"] }
+core-graphics = "0.25"
+coreaudio-sys = "0.2"
