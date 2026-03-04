@@ -1,37 +1,64 @@
-#![allow(dead_code)]
-
 use core_foundation::base::TCFType;
 use core_foundation::mach_port::CFMachPortRef;
-use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
-use core_graphics::event::{
-    CGEvent, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
-    CGEventTapProxy, CGEventType, CallbackResult,
+use core_foundation::runloop::{
+    kCFRunLoopCommonModes, CFRunLoop, CFRunLoopSource, CFRunLoopSourceRef,
 };
-use std::sync::{Arc, Mutex};
+use std::os::raw::c_void;
+use std::sync::Mutex;
 
-// NX_SYSDEFINED event type (value 14) is not in the CGEventType enum,
-// so we transmute it. This is the event type used for media key events
-// on macOS (volume, brightness, etc.).
+// CGEventTapCreate and related types from CoreGraphics.
+// We declare our own FFI because the core-graphics crate's CGEventType enum
+// doesn't include NX_SYSDEFINED (value 14) and transmuting to create it is UB.
+type CGEventRef = *mut c_void;
+type CGEventMask = u64;
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventTapCreate(
+        tap: u32,       // CGEventTapLocation
+        place: u32,     // CGEventTapPlacement
+        options: u32,   // CGEventTapOptions
+        eventsOfInterest: CGEventMask,
+        callback: unsafe extern "C" fn(
+            proxy: *mut c_void,
+            event_type: u32,
+            event: CGEventRef,
+            user_info: *mut c_void,
+        ) -> CGEventRef,
+        userInfo: *mut c_void,
+    ) -> CFMachPortRef;
+
+    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
+
+    fn CFMachPortCreateRunLoopSource(
+        allocator: *const c_void,
+        port: CFMachPortRef,
+        order: i64,
+    ) -> CFRunLoopSourceRef;
+}
+
+// CGEventTapLocation::HID = 0
+const K_CG_HID_EVENT_TAP: u32 = 0;
+// CGEventTapPlacement::HeadInsertEventTap = 0
+const K_CG_HEAD_INSERT_EVENT_TAP: u32 = 0;
+// CGEventTapOptions::Default = 0 (not listen-only, can modify/drop)
+const K_CG_EVENT_TAP_OPTION_DEFAULT: u32 = 0;
+
+// NX_SYSDEFINED event type = 14
 const NX_SYSDEFINED: u32 = 14;
+// kCGEventTapDisabledByTimeout
+const K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFFFFFE;
 
-// NX key type constants encoded in the data1 field of NX_SYSDEFINED events.
+// NX key type constants encoded in data1 of NX_SYSDEFINED events.
 const NX_KEYTYPE_SOUND_UP: i64 = 0;
 const NX_KEYTYPE_SOUND_DOWN: i64 = 1;
 const NX_KEYTYPE_MUTE: i64 = 7;
-
-// Subtype indicating auxiliary control button events (media keys).
 const NX_SUBTYPE_AUX_CONTROL_BUTTONS: i64 = 8;
 
-// CGEventField values for NX_SYSDEFINED event data.
-// These are not in the EventField struct from core-graphics.
+// CGEventField values for reading NX_SYSDEFINED data.
 const EVENT_FIELD_SUBTYPE: u32 = 110; // 0x6E
-const EVENT_FIELD_DATA1: u32 = 111; // 0x6F
-
-// Raw FFI binding to re-enable an event tap from the callback.
-#[link(name = "CoreGraphics", kind = "framework")]
-extern "C" {
-    fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
-}
+const EVENT_FIELD_DATA1: u32 = 111;   // 0x6F
 
 /// Represents the type of volume key event intercepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,36 +68,15 @@ pub enum VolumeKey {
     Mute,
 }
 
-/// A wrapper around a raw `CFMachPortRef` that is safe to send between threads.
-///
-/// We only use this to call `CGEventTapEnable`, which is documented as safe
-/// for this purpose. The mach port lifetime is managed by the `CGEventTap`
-/// struct on the owning thread.
-#[derive(Clone, Copy)]
-struct SendableMachPortRef(CFMachPortRef);
-
-// SAFETY: CFMachPortRef is a Core Foundation reference type. We only use it
-// to call CGEventTapEnable, which is thread-safe for re-enabling an event tap.
-// The underlying mach port is kept alive by the CGEventTap on the run loop thread.
-unsafe impl Send for SendableMachPortRef {}
-unsafe impl Sync for SendableMachPortRef {}
-
-/// Attempts to decode a volume key press from an NX_SYSDEFINED CGEvent.
-///
-/// Volume keys arrive as NX_SYSDEFINED events with:
-/// - subtype == 8 (NX_SUBTYPE_AUX_CONTROL_BUTTONS)
-/// - data1 encodes: key_code = (data1 >> 16) & 0xFF
-///                   key_flags = (data1 >> 8) & 0xFF
-///                   key_down = (key_flags & 0x01) != 0
-///
+/// Decode a volume key press from a raw NX_SYSDEFINED event.
 /// Returns `Some(VolumeKey)` only on key-down events.
-fn decode_volume_key(event: &CGEvent) -> Option<VolumeKey> {
-    let subtype = event.get_integer_value_field(EVENT_FIELD_SUBTYPE);
+unsafe fn decode_volume_key(event: CGEventRef) -> Option<VolumeKey> {
+    let subtype = CGEventGetIntegerValueField(event, EVENT_FIELD_SUBTYPE);
     if subtype != NX_SUBTYPE_AUX_CONTROL_BUTTONS {
         return None;
     }
 
-    let data1 = event.get_integer_value_field(EVENT_FIELD_DATA1);
+    let data1 = CGEventGetIntegerValueField(event, EVENT_FIELD_DATA1);
     let key_code = (data1 >> 16) & 0xFF;
     let key_flags = (data1 >> 8) & 0xFF;
     let key_down = (key_flags & 0x01) != 0;
@@ -87,107 +93,124 @@ fn decode_volume_key(event: &CGEvent) -> Option<VolumeKey> {
     }
 }
 
+/// State shared between the event tap callback and the run loop.
+struct TapState {
+    callback: Box<dyn FnMut(VolumeKey) + Send>,
+    port: CFMachPortRef,
+}
+
+/// Raw C callback for CGEventTapCreate.
+///
+/// Returns NULL to swallow the event, or the original event to pass it through.
+unsafe extern "C" fn tap_callback(
+    _proxy: *mut c_void,
+    event_type: u32,
+    event: CGEventRef,
+    user_info: *mut c_void,
+) -> CGEventRef {
+    // Re-enable tap if it was disabled by timeout.
+    if event_type == K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT {
+        let state = &*(user_info as *const Mutex<TapState>);
+        if let Ok(guard) = state.lock() {
+            CGEventTapEnable(guard.port, true);
+        }
+        return event;
+    }
+
+    // Only process NX_SYSDEFINED events.
+    if event_type != NX_SYSDEFINED {
+        return event;
+    }
+
+    let volume_key = decode_volume_key(event);
+
+    match volume_key {
+        Some(key) => {
+            let state = &*(user_info as *const Mutex<TapState>);
+            if let Ok(mut guard) = state.lock() {
+                (guard.callback)(key);
+            }
+            // Return NULL to swallow the event (suppress native HUD).
+            std::ptr::null_mut()
+        }
+        None => event, // Pass through non-volume NX_SYSDEFINED events.
+    }
+}
+
 /// Starts an event tap that intercepts system volume key events.
 ///
-/// The provided callback `on_volume_key` is invoked for each volume key-down
-/// event. Volume key events are swallowed (not passed to the system) so that
-/// the caller can handle volume changes directly.
+/// `on_volume_key` is called for each volume key-down event. The native volume
+/// HUD is suppressed by swallowing the key event.
 ///
-/// This function blocks the current thread by running a CFRunLoop. It should
-/// be called from a dedicated thread.
+/// This function blocks the current thread (runs a CFRunLoop). Call it from a
+/// dedicated background thread.
 ///
-/// # Errors
-///
-/// Returns `Err` if the event tap cannot be created. This typically happens
-/// when the process lacks Accessibility permissions (System Settings >
-/// Privacy & Security > Accessibility).
-///
-/// # Safety considerations
-///
-/// The event tap requires the `kCGEventTapOptionDefault` permission level,
-/// which allows modifying or dropping events. The process must be trusted
-/// for Accessibility access.
+/// Returns `Err` if the event tap cannot be created (typically means the app
+/// lacks Accessibility permissions).
 pub fn run_event_tap<F>(on_volume_key: F) -> Result<(), String>
 where
     F: FnMut(VolumeKey) + Send + 'static,
 {
-    // Wrap the mutable callback in a Mutex so the closure passed to CGEventTap
-    // can be Fn (not FnMut). The Mutex is uncontended since the CFRunLoop
-    // callback is single-threaded.
-    let callback = Mutex::new(on_volume_key);
+    // Event mask: NX_SYSDEFINED (bit 14) only. The timeout event is delivered
+    // automatically regardless of the mask.
+    let event_mask: CGEventMask = 1u64 << NX_SYSDEFINED;
 
-    // NX_SYSDEFINED (14) is not in the CGEventType enum, so we transmute.
-    // SAFETY: CGEventType is #[repr(u32)] and value 14 is a valid macOS
-    // event type (NX_SYSDEFINED). The core-graphics crate itself uses
-    // similar out-of-range values (e.g., TapDisabledByTimeout = 0xFFFFFFFE).
-    let nx_sysdefined: CGEventType = unsafe { std::mem::transmute(NX_SYSDEFINED) };
+    // State shared with the callback via user_info pointer.
+    // The Mutex protects the FnMut callback.
+    let state = Box::new(Mutex::new(TapState {
+        callback: Box::new(on_volume_key),
+        port: std::ptr::null_mut(),
+    }));
+    let state_ptr = Box::into_raw(state);
 
-    let events_of_interest = vec![nx_sysdefined, CGEventType::TapDisabledByTimeout];
+    let port = unsafe {
+        CGEventTapCreate(
+            K_CG_HID_EVENT_TAP,
+            K_CG_HEAD_INSERT_EVENT_TAP,
+            K_CG_EVENT_TAP_OPTION_DEFAULT,
+            event_mask,
+            tap_callback,
+            state_ptr as *mut c_void,
+        )
+    };
 
-    // Shared holder for the mach port reference. We populate it after creating
-    // the event tap, and the callback reads it to re-enable the tap on timeout.
-    let port_holder: Arc<Mutex<Option<SendableMachPortRef>>> = Arc::new(Mutex::new(None));
-    let port_holder_cb = Arc::clone(&port_holder);
-
-    let event_tap = CGEventTap::new(
-        CGEventTapLocation::HID,
-        CGEventTapPlacement::HeadInsertEventTap,
-        CGEventTapOptions::Default,
-        events_of_interest,
-        move |_proxy: CGEventTapProxy, event_type: CGEventType, event: &CGEvent| {
-            // Re-enable the tap if it was disabled by timeout.
-            // macOS disables event taps that take too long to process events.
-            if matches!(event_type, CGEventType::TapDisabledByTimeout) {
-                if let Ok(guard) = port_holder_cb.lock() {
-                    if let Some(port) = *guard {
-                        unsafe { CGEventTapEnable(port.0, true) };
-                    }
-                }
-                return CallbackResult::Keep;
-            }
-
-            // Check if this is a volume key event.
-            if let Some(volume_key) = decode_volume_key(event) {
-                if let Ok(mut cb) = callback.lock() {
-                    cb(volume_key);
-                }
-                // Swallow the event so the system doesn't also handle it.
-                return CallbackResult::Drop;
-            }
-
-            // Pass through any other NX_SYSDEFINED events (brightness, etc.).
-            CallbackResult::Keep
-        },
-    )
-    .map_err(|()| {
-        "Failed to create event tap. \
-         Ensure this application has Accessibility permissions \
-         (System Settings > Privacy & Security > Accessibility)."
-            .to_string()
-    })?;
-
-    // Store the mach port reference so the callback can re-enable the tap.
-    {
-        let raw_port = event_tap.mach_port().as_concrete_TypeRef();
-        let mut guard = port_holder.lock().unwrap();
-        *guard = Some(SendableMachPortRef(raw_port));
+    if port.is_null() {
+        // Clean up the leaked state.
+        unsafe { drop(Box::from_raw(state_ptr)) };
+        return Err(
+            "Failed to create event tap. \
+             Ensure this application has Accessibility permissions \
+             (System Settings > Privacy & Security > Accessibility)."
+                .to_string(),
+        );
     }
 
-    // Create a run loop source from the tap's mach port and add it to the
-    // current thread's run loop.
-    let loop_source = event_tap
-        .mach_port()
-        .create_runloop_source(0)
-        .map_err(|_| "Failed to create run loop source from event tap mach port.")?;
+    // Store the port in the state so the callback can re-enable it on timeout.
+    unsafe {
+        if let Ok(mut guard) = (*state_ptr).lock() {
+            guard.port = port;
+        }
+    }
 
-    let run_loop = CFRunLoop::get_current();
-    run_loop.add_source(&loop_source, unsafe { kCFRunLoopCommonModes });
+    // Create a run loop source from the mach port and add it to this thread's
+    // run loop.
+    let source = unsafe { CFMachPortCreateRunLoopSource(std::ptr::null(), port, 0) };
+    if source.is_null() {
+        unsafe { drop(Box::from_raw(state_ptr)) };
+        return Err("Failed to create run loop source from event tap.".to_string());
+    }
 
-    event_tap.enable();
+    unsafe {
+        let run_loop = CFRunLoop::get_current();
+        let source_ref = CFRunLoopSource::wrap_under_create_rule(source);
+        run_loop.add_source(&source_ref, kCFRunLoopCommonModes);
+    }
 
-    // Block the current thread, processing events via the run loop.
-    // This never returns under normal operation.
+    // Enable the tap and block on the run loop.
+    unsafe { CGEventTapEnable(port, true) };
     CFRunLoop::run_current();
 
+    // Clean up (unreachable in practice — the run loop runs forever).
+    unsafe { drop(Box::from_raw(state_ptr)) };
     Ok(())
 }

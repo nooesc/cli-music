@@ -15,6 +15,19 @@ use std::cell::RefCell;
 // CGFloat is f64 on 64-bit macOS (the only supported target).
 type CGFloat = f64;
 
+// Opaque CGColor struct for msg_send! type encoding (`^{CGColor=}`).
+// CoreGraphics' CGColorRef is `*const CGColor` — we only pass it through.
+#[repr(C)]
+struct CGColor {
+    _priv: [u8; 0],
+}
+
+unsafe impl objc2::encode::RefEncode for CGColor {
+    const ENCODING_REF: objc2::encode::Encoding = objc2::encode::Encoding::Pointer(
+        &objc2::encode::Encoding::Struct("CGColor", &[]),
+    );
+}
+
 /// HUD window size in points.
 const HUD_SIZE: f64 = 200.0;
 
@@ -173,7 +186,7 @@ fn create_indicator_views(
         unsafe {
             let layer: *mut AnyObject = msg_send![&bar_view, layer];
             if !layer.is_null() {
-                let cg_color: *mut AnyObject = msg_send![&*unfilled_color, CGColor];
+                let cg_color: *const CGColor = msg_send![&*unfilled_color, CGColor];
                 let _: () = msg_send![layer, setBackgroundColor: cg_color];
                 let _: () = msg_send![layer, setCornerRadius: BAR_RADIUS as CGFloat];
             }
@@ -242,7 +255,7 @@ pub fn show_hud(window: &NSWindow, volume: f32, muted: bool) {
             unsafe {
                 let layer: *mut AnyObject = msg_send![bar, layer];
                 if !layer.is_null() {
-                    let cg_color: *mut AnyObject = msg_send![color, CGColor];
+                    let cg_color: *const CGColor = msg_send![color, CGColor];
                     let _: () = msg_send![layer, setBackgroundColor: cg_color];
                 }
             }
