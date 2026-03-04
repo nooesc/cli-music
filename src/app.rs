@@ -79,7 +79,7 @@ impl App {
 
     pub fn clear_expired_notification(&mut self) {
         if let Some((_, when)) = &self.notification {
-            if when.elapsed().as_secs() >= 2 {
+            if when.elapsed() >= std::time::Duration::from_secs(2) {
                 self.notification = None;
             }
         }

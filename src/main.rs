@@ -287,11 +287,13 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
             app.mini_player = !app.mini_player;
         }
         KeyCode::Char('f') => {
-            let tx_save = tx.clone();
-            thread::spawn(move || {
-                bridge::add_to_library();
-                let _ = tx_save.send(AppEvent::TrackSaved);
-            });
+            if !app.player.track_name.is_empty() {
+                let tx_save = tx.clone();
+                thread::spawn(move || {
+                    bridge::add_to_library();
+                    let _ = tx_save.send(AppEvent::TrackSaved);
+                });
+            }
         }
         KeyCode::Left | KeyCode::Char('<') | KeyCode::Char(',') => {
             let new_pos = (app.player.position - 5.0).max(0.0);
