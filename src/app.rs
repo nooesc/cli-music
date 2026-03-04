@@ -274,7 +274,8 @@ impl App {
 
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PersistedState {
     pub active_panel: Panel,
     pub mini_player: bool,
@@ -282,6 +283,19 @@ pub struct PersistedState {
     pub playlist_index: Option<usize>,
     pub track_index: Option<usize>,
     pub open_playlist_name: Option<String>,
+}
+
+impl Default for PersistedState {
+    fn default() -> Self {
+        Self {
+            active_panel: Panel::Library,
+            mini_player: false,
+            library_view: LibraryView::Playlists,
+            playlist_index: None,
+            track_index: None,
+            open_playlist_name: None,
+        }
+    }
 }
 
 impl PersistedState {
@@ -310,6 +324,7 @@ impl PersistedState {
     pub fn apply(self, app: &mut App) {
         app.active_panel = self.active_panel;
         app.mini_player = self.mini_player;
+        app.view = LibraryView::Playlists; // explicit default; overridden below if tracks restore succeeds
 
         // Restore playlist selection (clamped to actual count)
         if let Some(idx) = self.playlist_index {
