@@ -239,6 +239,9 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
     // Global keys
     match key.code {
         KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.should_quit = true;
+        }
         KeyCode::Char(' ') => {
             let _ = bridge::toggle_playback();
         }
