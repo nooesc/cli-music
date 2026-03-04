@@ -339,6 +339,7 @@ impl PersistedState {
                 if let Some(pos) = app.playlists.iter().position(|p| p.name == *name) {
                     app.playlist_state.select(Some(pos));
                     if let Ok(tracks) = crate::library::fetch_playlist_tracks(name) {
+                        app.track_cache.insert(name.clone(), tracks.clone());
                         app.tracks = tracks;
                         let track_idx = self.track_index
                             .filter(|&i| i < app.tracks.len())
