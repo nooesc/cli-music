@@ -43,13 +43,10 @@ fn main() {
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
-    // ── 2. Audio device ─────────────────────────────────────────────────
-    let device = audio::default_output_device().expect("No default output audio device found");
-
-    // ── 3. HUD window ───────────────────────────────────────────────────
+    // ── 2. HUD window ───────────────────────────────────────────────────
     let window = hud::create_hud_window(mtm);
 
-    // ── 4. Event tap on a background thread ─────────────────────────────
+    // ── 3. Event tap on a background thread ─────────────────────────────
     let (tx, rx) = mpsc::channel::<VolumeKey>();
 
     std::thread::spawn(move || {
@@ -61,7 +58,7 @@ fn main() {
         }
     });
 
-    // ── 5. Main run-loop: poll for volume key events ────────────────────
+    // ── 4. Main run-loop: poll for volume key events ────────────────────
     let run_loop = NSRunLoop::currentRunLoop();
 
     // Track when we last showed the HUD so we can auto-hide it.
@@ -74,6 +71,13 @@ fn main() {
 
         // Process all queued volume-key events.
         while let Ok(key) = rx.try_recv() {
+            // Re-query the default device each time in case the user switched
+            // audio output (headphones, AirPods, etc.).
+            let device = match audio::default_output_device() {
+                Some(d) => d,
+                None => continue,
+            };
+
             match key {
                 VolumeKey::Up => {
                     let vol = audio::get_volume(device).unwrap_or(0.0);

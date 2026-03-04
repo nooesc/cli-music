@@ -141,7 +141,7 @@ fn create_indicator_views(
     icon_label.setDrawsBackground(false);
     icon_label.setTextColor(Some(&NSColor::whiteColor()));
     icon_label.setFont(Some(&NSFont::systemFontOfSize(ICON_FONT_SIZE)));
-    icon_label.setAlignment(NSTextAlignment(2)); // Center = 2
+    icon_label.setAlignment(NSTextAlignment::Center);
 
     // Position the icon label centered horizontally, in the upper portion.
     // The label needs enough room for a large emoji; give it a generous frame.
