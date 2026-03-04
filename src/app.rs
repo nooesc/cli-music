@@ -1,6 +1,7 @@
 use crate::bridge::PlayerStatus;
 use crate::library::{PlaylistEntry, TrackEntry};
 use ratatui::widgets::ListState;
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
 pub struct App {
@@ -27,13 +28,13 @@ pub struct App {
     pub mini_player: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Panel {
     NowPlaying,
     Library,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LibraryView {
     Playlists,
     Tracks,
@@ -271,4 +272,91 @@ impl App {
             .and_then(|i| self.tracks.get(i))
     }
 
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct PersistedState {
+    pub active_panel: Panel,
+    pub mini_player: bool,
+    pub library_view: LibraryView,
+    pub playlist_index: Option<usize>,
+    pub track_index: Option<usize>,
+    pub open_playlist_name: Option<String>,
+}
+
+impl PersistedState {
+    /// Extract persistable state from the current App.
+    pub fn from_app(app: &App) -> Self {
+        let open_playlist_name = if app.view == LibraryView::Tracks {
+            app.playlist_state
+                .selected()
+                .and_then(|i| app.playlists.get(i))
+                .map(|p| p.name.clone())
+        } else {
+            None
+        };
+
+        Self {
+            active_panel: app.active_panel.clone(),
+            mini_player: app.mini_player,
+            library_view: app.view.clone(),
+            playlist_index: app.playlist_state.selected(),
+            track_index: app.track_state.selected(),
+            open_playlist_name,
+        }
+    }
+
+    /// Apply persisted state onto an App that already has playlists loaded.
+    pub fn apply(self, app: &mut App) {
+        app.active_panel = self.active_panel;
+        app.mini_player = self.mini_player;
+
+        // Restore playlist selection (clamped to actual count)
+        if let Some(idx) = self.playlist_index {
+            if idx < app.playlists.len() {
+                app.playlist_state.select(Some(idx));
+            }
+        }
+
+        // If we were in Tracks view and have a playlist name, try to reload tracks
+        if self.library_view == LibraryView::Tracks {
+            if let Some(ref name) = self.open_playlist_name {
+                if let Some(pos) = app.playlists.iter().position(|p| p.name == *name) {
+                    app.playlist_state.select(Some(pos));
+                    if let Ok(tracks) = crate::library::fetch_playlist_tracks(name) {
+                        app.tracks = tracks;
+                        let track_idx = self.track_index
+                            .filter(|&i| i < app.tracks.len())
+                            .or(if app.tracks.is_empty() { None } else { Some(0) });
+                        app.track_state.select(track_idx);
+                        app.view = LibraryView::Tracks;
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// State file path: ~/.config/cli-music/state.json
+    pub fn path() -> Option<std::path::PathBuf> {
+        dirs::config_dir().map(|d| d.join("cli-music").join("state.json"))
+    }
+
+    /// Load from disk. Returns None on any failure.
+    pub fn load() -> Option<Self> {
+        let path = Self::path()?;
+        let data = std::fs::read_to_string(path).ok()?;
+        serde_json::from_str(&data).ok()
+    }
+
+    /// Save to disk. Silently ignores errors.
+    pub fn save(&self) {
+        let Some(path) = Self::path() else { return };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(self) {
+            let _ = std::fs::write(path, json);
+        }
+    }
 }
