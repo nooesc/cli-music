@@ -7,5 +7,6 @@ edition = "2021"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSThread", "NSString", "NSRunLoop", "NSTimer", "NSGeometry", "NSNotification"] }
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSWindow", "NSView", "NSColor", "NSGraphicsContext", "NSVisualEffectView", "NSScreen", "NSEvent", "NSRunningApplication", "NSResponder", "NSBezierPath", "NSText", "NSFont", "NSImage", "NSImageRep"] }
+core-foundation = "0.10"
 core-graphics = "0.25"
 coreaudio-sys = "0.2"

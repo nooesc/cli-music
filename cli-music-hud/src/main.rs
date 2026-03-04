@@ -1,4 +1,5 @@
 mod audio;
+mod event_tap;
 
 fn main() {
     let device = audio::default_output_device().expect("No output device");
