@@ -4,7 +4,7 @@ mod bridge;
 mod library;
 mod ui;
 
-use app::{App, LibraryView, Panel};
+use app::{App, LibraryView, Panel, PersistedState};
 use bridge::PlayerStatus;
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
@@ -36,6 +36,11 @@ fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
     app.playlists = library::fetch_playlists().unwrap_or_default();
     if !app.playlists.is_empty() {
         app.playlist_state.select(Some(0));
+    }
+
+    // Restore saved UI state
+    if let Some(state) = PersistedState::load() {
+        state.apply(&mut app);
     }
 
     let (tx, rx) = mpsc::channel();
@@ -111,6 +116,7 @@ fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
         }
 
         if app.should_quit {
+            PersistedState::from_app(&app).save();
             break;
         }
     }
