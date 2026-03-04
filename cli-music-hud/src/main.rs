@@ -1,5 +1,6 @@
 mod audio;
 mod event_tap;
+mod hud;
 
 use std::sync::mpsc;
 
