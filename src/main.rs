@@ -18,6 +18,7 @@ enum AppEvent {
     PlayerUpdate(PlayerStatus),
     TracksLoaded(LibraryView, String, Vec<library::TrackEntry>),
     ArtworkLoaded(String, Option<image::DynamicImage>),
+    TrackSaved,
 }
 
 fn main() -> Result<()> {
@@ -70,11 +71,30 @@ fn run(mut terminal: ratatui::DefaultTerminal) -> Result<()> {
     });
 
     loop {
+        app.clear_expired_notification();
         terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
         match rx.recv()? {
             AppEvent::Key(key) => handle_key(&mut app, key, &tx),
             AppEvent::Tick => {}
+            AppEvent::TrackSaved => {
+                app.notify("\u{2713} Saved to Library!");
+                app.track_cache.remove("Library");
+                // If currently viewing the Library playlist, refresh in place
+                if app.view == LibraryView::Tracks {
+                    let is_library = app.playlist_state.selected()
+                        .and_then(|i| app.playlists.get(i))
+                        .is_some_and(|p| p.name == "Library");
+                    if is_library {
+                        app.loading = true;
+                        let tx_bg = tx.clone();
+                        thread::spawn(move || {
+                            let tracks = library::fetch_playlist_tracks("Library").unwrap_or_default();
+                            let _ = tx_bg.send(AppEvent::TracksLoaded(LibraryView::Tracks, "Library".to_string(), tracks));
+                        });
+                    }
+                }
+            }
             AppEvent::PlayerUpdate(status) => {
                 let track_changed =
                     status.track_name != app.artwork_track && !status.track_name.is_empty();
@@ -267,9 +287,11 @@ fn handle_key(app: &mut App, key: crossterm::event::KeyEvent, tx: &mpsc::Sender<
             app.mini_player = !app.mini_player;
         }
         KeyCode::Char('f') => {
-            bridge::add_to_library();
-            // Invalidate Library cache so the saved track shows up
-            app.track_cache.remove("Library");
+            let tx_save = tx.clone();
+            thread::spawn(move || {
+                bridge::add_to_library();
+                let _ = tx_save.send(AppEvent::TrackSaved);
+            });
         }
         KeyCode::Left | KeyCode::Char('<') | KeyCode::Char(',') => {
             let new_pos = (app.player.position - 5.0).max(0.0);

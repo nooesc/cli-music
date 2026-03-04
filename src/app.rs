@@ -3,6 +3,7 @@ use crate::library::{PlaylistEntry, TrackEntry};
 use ratatui::widgets::ListState;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::time::Instant;
 
 pub struct App {
     pub should_quit: bool,
@@ -26,6 +27,8 @@ pub struct App {
     pub artwork_track: String,
     // Mini-player mode: hide library, show only now playing
     pub mini_player: bool,
+    // Temporary notification overlay (message, when it was set)
+    pub notification: Option<(String, Instant)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,6 +63,7 @@ impl Default for App {
             artwork: None,
             artwork_track: String::new(),
             mini_player: false,
+            notification: None,
         }
     }
 }
@@ -67,6 +71,18 @@ impl Default for App {
 impl App {
     pub fn update_player_status(&mut self, status: PlayerStatus) {
         self.player = status;
+    }
+
+    pub fn notify(&mut self, msg: impl Into<String>) {
+        self.notification = Some((msg.into(), Instant::now()));
+    }
+
+    pub fn clear_expired_notification(&mut self) {
+        if let Some((_, when)) = &self.notification {
+            if when.elapsed().as_secs() >= 2 {
+                self.notification = None;
+            }
+        }
     }
 
     /// Move selection down by `n` in the current list.

@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, Padding, Paragraph},
     Frame,
 };
 
@@ -44,6 +44,26 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     }
 
     draw_controls(frame, bottom_bar, app);
+
+    // Notification overlay (rendered last so it paints on top)
+    if let Some((ref msg, _)) = app.notification {
+        let area = frame.area();
+        let popup_width = (msg.len() as u16 + 4).min(area.width.saturating_sub(4));
+        let popup_height = 3;
+        let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+        let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+        let popup_area = Rect::new(x, y, popup_width, popup_height);
+
+        frame.render_widget(Clear, popup_area);
+        let popup = Paragraph::new(Line::from(msg.as_str()).alignment(Alignment::Center))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(Color::Green))
+            )
+            .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD));
+        frame.render_widget(popup, popup_area);
+    }
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
