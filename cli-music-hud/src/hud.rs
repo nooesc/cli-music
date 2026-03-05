@@ -1,15 +1,13 @@
-#![allow(dead_code)]
-
 use objc2::rc::Retained;
-use objc2::runtime::AnyObject;
+use objc2::runtime::{AnyClass, AnyObject};
 use objc2::{msg_send, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
-    NSAnimationContext, NSBackingStoreType, NSColor, NSFont, NSScreen, NSTextField,
-    NSTextAlignment, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
-    NSVisualEffectState, NSVisualEffectView, NSWindow, NSWindowCollectionBehavior,
-    NSWindowStyleMask, NSStatusWindowLevel,
+    NSAnimationContext, NSBackingStoreType, NSColor, NSImageView, NSScreen, NSView,
+    NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState,
+    NSVisualEffectView, NSWindow, NSWindowCollectionBehavior, NSWindowStyleMask,
+    NSStatusWindowLevel,
 };
-use objc2_foundation::{ns_string, NSPoint, NSRect, NSSize};
+use objc2_foundation::{ns_string, NSPoint, NSRect, NSSize, NSString};
 use std::cell::RefCell;
 
 // CGFloat is f64 on 64-bit macOS (the only supported target).
@@ -46,17 +44,63 @@ const BAR_HEIGHT: f64 = 8.0;
 const BAR_GAP: f64 = 2.5;
 const BAR_Y: f64 = 30.0; // distance from bottom of HUD
 const BAR_RADIUS: f64 = 2.0;
-const ICON_FONT_SIZE: f64 = 68.0;
+
+/// SF Symbol icon layout.
+const ICON_POINT_SIZE: f64 = 56.0;
+const ICON_AREA_SIZE: f64 = 120.0;
 
 /// Retained references to the volume indicator subviews so we can update
 /// them cheaply from `show_hud` without traversing the view hierarchy.
 struct IndicatorViews {
-    icon_label: Retained<NSTextField>,
+    icon_view: Retained<NSImageView>,
     bars: Vec<Retained<NSView>>,
+    unfilled_color: Retained<NSColor>,
 }
 
 thread_local! {
     static INDICATOR: RefCell<Option<IndicatorViews>> = const { RefCell::new(None) };
+}
+
+/// Create an SF Symbol image with variable value (0.0–1.0) for wave intensity.
+///
+/// Uses `[NSImage imageWithSystemSymbolName:variableValue:accessibilityDescription:]`
+/// so the speaker body stays the same size while wave arcs fade in/out.
+///
+/// Returns a raw pointer to an autoreleased NSImage, or null on failure.
+unsafe fn create_symbol_image(name: &NSString, variable_value: f64) -> *mut AnyObject {
+    let cls = AnyClass::get(c"NSImage").unwrap();
+    let none: Option<&NSString> = None;
+    let image: *mut AnyObject = msg_send![cls,
+        imageWithSystemSymbolName: name,
+        variableValue: variable_value as CGFloat,
+        accessibilityDescription: none
+    ];
+    if image.is_null() {
+        return std::ptr::null_mut();
+    }
+
+    // Apply symbol configuration: light weight for thin sound waves.
+    let config_cls = AnyClass::get(c"NSImageSymbolConfiguration").unwrap();
+    let config: *mut AnyObject = msg_send![config_cls,
+        configurationWithPointSize: ICON_POINT_SIZE as CGFloat,
+        weight: -0.4 as CGFloat, // NSFontWeightLight
+        scale: 3isize            // NSImageSymbolScaleLarge
+    ];
+
+    let configured: *mut AnyObject = msg_send![image, imageWithSymbolConfiguration: config];
+    if !configured.is_null() {
+        configured
+    } else {
+        image
+    }
+}
+
+/// Set the SF Symbol image on the icon NSImageView.
+unsafe fn set_icon_image(icon_view: &NSImageView, symbol_name: &NSString, variable_value: f64) {
+    let image = create_symbol_image(symbol_name, variable_value);
+    if !image.is_null() {
+        let _: () = msg_send![icon_view, setImage: image];
+    }
 }
 
 /// Create a translucent, borderless, always-on-top HUD window.
@@ -108,8 +152,6 @@ pub fn create_hud_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
     // Enable layer backing and set corner radius via Core Animation.
     effect_view.setWantsLayer(true);
     unsafe {
-        // layer() requires the objc2-quartz-core feature which we don't want
-        // to pull in, so we use raw msg_send! instead.
         let layer: *mut AnyObject = msg_send![&effect_view, layer];
         if !layer.is_null() {
             let _: () = msg_send![layer, setCornerRadius: CORNER_RADIUS as CGFloat];
@@ -118,54 +160,60 @@ pub fn create_hud_window(mtm: MainThreadMarker) -> Retained<NSWindow> {
     }
 
     // --- Volume indicator subviews ---
-    let (icon_label, bars) = create_indicator_views(mtm, &effect_view);
+    let (icon_view, bars) = create_indicator_views(mtm, &effect_view);
 
-    // Install as the window's content view.  We upcast to &NSView because
-    // setContentView expects Option<&NSView>.
+    // Install as the window's content view.
     let view: &NSView = &effect_view;
     window.setContentView(Some(view));
 
     // Store indicator references for later use in show_hud.
+    let unfilled_color = NSColor::colorWithWhite_alpha(0.3, 1.0);
     INDICATOR.with(|cell| {
-        *cell.borrow_mut() = Some(IndicatorViews { icon_label, bars });
+        *cell.borrow_mut() = Some(IndicatorViews { icon_view, bars, unfilled_color });
     });
 
     // Start fully transparent.
     window.setAlphaValue(0.0);
 
-    // Center on screen now so the position is ready when first shown.
-    center_on_screen(&window, mtm);
+    // Center on the active screen so the position is ready when first shown.
+    center_on_active_screen(&window);
 
     window
 }
 
-/// Create the speaker icon label and 16 volume bar segment views, adding
-/// them as subviews of `parent`.  Returns retained references for later
-/// updates.
+/// Create the speaker icon (NSImageView with SF Symbol) and 16 volume bar
+/// segment views, adding them as subviews of `parent`. Returns retained
+/// references for later updates.
 fn create_indicator_views(
     mtm: MainThreadMarker,
     parent: &NSVisualEffectView,
-) -> (Retained<NSTextField>, Vec<Retained<NSView>>) {
-    // --- Speaker icon ---
-    let icon_label = NSTextField::labelWithString(ns_string!("\u{1F50A}"), mtm);
-    icon_label.setEditable(false);
-    icon_label.setSelectable(false);
-    icon_label.setBordered(false);
-    icon_label.setDrawsBackground(false);
-    icon_label.setTextColor(Some(&NSColor::whiteColor()));
-    icon_label.setFont(Some(&NSFont::systemFontOfSize(ICON_FONT_SIZE)));
-    icon_label.setAlignment(NSTextAlignment::Center);
+) -> (Retained<NSImageView>, Vec<Retained<NSView>>) {
+    // --- Speaker icon (SF Symbol via NSImageView) ---
+    let icon_x = (HUD_SIZE - ICON_AREA_SIZE) / 2.0;
+    let icon_y = 55.0; // bottom of icon area, leaving room for bars below
+    let icon_frame = NSRect::new(
+        NSPoint::new(icon_x, icon_y),
+        NSSize::new(ICON_AREA_SIZE, ICON_AREA_SIZE),
+    );
 
-    // Position the icon label centered horizontally, in the upper portion.
-    // The label needs enough room for a large emoji; give it a generous frame.
-    let icon_width = HUD_SIZE;
-    let icon_height = ICON_FONT_SIZE + 20.0;
-    let icon_y = HUD_SIZE - icon_height - 20.0; // 20pt from top
-    let icon_frame = NSRect::new(NSPoint::new(0.0, icon_y), NSSize::new(icon_width, icon_height));
-    icon_label.setFrame(icon_frame);
+    let icon_view = NSImageView::initWithFrame(NSImageView::alloc(mtm), icon_frame);
 
-    let icon_view: &NSView = &icon_label;
-    parent.addSubview(icon_view);
+    unsafe {
+        // Set the initial speaker icon at full volume.
+        set_icon_image(&icon_view, ns_string!("speaker.wave.3.fill"), 1.0);
+
+        // Scale the symbol to fill the image view proportionally.
+        let _: () = msg_send![&icon_view, setImageScaling: 3isize]; // NSImageScaleProportionallyUpOrDown
+
+        // White tint for visibility on the dark HUD background.
+        let _: () = msg_send![&icon_view, setContentTintColor: &*NSColor::whiteColor()];
+
+        // Disable editing (no drag-and-drop).
+        let _: () = msg_send![&icon_view, setEditable: false];
+    }
+
+    let icon_as_view: &NSView = &icon_view;
+    parent.addSubview(icon_as_view);
 
     // --- Volume bar segments ---
     let total_gap = BAR_GAP * (BAR_COUNT as f64 - 1.0);
@@ -197,21 +245,41 @@ fn create_indicator_views(
         bars.push(bar_view);
     }
 
-    (icon_label, bars)
+    (icon_view, bars)
 }
 
-/// Position the window at the centre of the main screen, shifted slightly
-/// downward (30 % from the top).
-pub fn center_on_screen(window: &NSWindow, mtm: MainThreadMarker) {
-    let Some(screen) = NSScreen::mainScreen(mtm) else {
-        return;
+/// Position the window centered horizontally on the screen that currently has
+/// keyboard focus, in the lower portion (15% from bottom).
+///
+/// Uses the mouse location to find the active screen so the HUD follows the
+/// user across displays.
+fn center_on_active_screen(window: &NSWindow) {
+    let Some(mtm) = MainThreadMarker::new() else { return };
+
+    // Find the screen containing the mouse cursor.
+    let mouse_loc = unsafe {
+        let loc: NSPoint = msg_send![objc2::runtime::AnyClass::get(c"NSEvent").unwrap(), mouseLocation];
+        loc
     };
+
+    let screens = NSScreen::screens(mtm);
+    let screen = screens
+        .iter()
+        .find(|s| {
+            let f = s.frame();
+            mouse_loc.x >= f.origin.x
+                && mouse_loc.x < f.origin.x + f.size.width
+                && mouse_loc.y >= f.origin.y
+                && mouse_loc.y < f.origin.y + f.size.height
+        })
+        .or_else(|| screens.iter().next());
+
+    let Some(screen) = screen else { return };
     let screen_frame = screen.frame();
     let window_frame = window.frame();
 
     let x = screen_frame.origin.x + (screen_frame.size.width - window_frame.size.width) / 2.0;
-    // Place the window slightly below vertical centre (30% from top).
-    let y = screen_frame.origin.y + (screen_frame.size.height - window_frame.size.height) * 0.40;
+    let y = screen_frame.origin.y + (screen_frame.size.height - window_frame.size.height) * 0.15;
 
     window.setFrameOrigin(NSPoint::new(x, y));
 }
@@ -228,17 +296,16 @@ pub fn show_hud(window: &NSWindow, volume: f32, muted: bool) {
             return;
         };
 
-        // Update speaker icon.
-        let icon = if muted {
-            ns_string!("\u{1F507}") // muted speaker
-        } else if volume < 0.01 {
-            ns_string!("\u{1F508}") // speaker low (no waves)
-        } else if volume < 0.34 {
-            ns_string!("\u{1F509}") // speaker medium (one wave)
+        // Always use the 3-wave icon with variable value so the speaker body
+        // stays a consistent size while wave arcs fade with volume.
+        let (symbol, var_val) = if muted {
+            (ns_string!("speaker.slash.fill"), 0.0)
         } else {
-            ns_string!("\u{1F50A}") // speaker high (three waves)
+            (ns_string!("speaker.wave.3.fill"), volume as f64)
         };
-        indicator.icon_label.setStringValue(icon);
+        unsafe {
+            set_icon_image(&indicator.icon_view, symbol, var_val);
+        }
 
         // Determine how many bars are filled.
         let filled = if muted {
@@ -248,10 +315,9 @@ pub fn show_hud(window: &NSWindow, volume: f32, muted: bool) {
         };
 
         let white = NSColor::whiteColor();
-        let gray = NSColor::colorWithWhite_alpha(0.3, 1.0);
 
         for (i, bar) in indicator.bars.iter().enumerate() {
-            let color = if i < filled { &*white } else { &*gray };
+            let color = if i < filled { &*white } else { &*indicator.unfilled_color };
             unsafe {
                 let layer: *mut AnyObject = msg_send![bar, layer];
                 if !layer.is_null() {
@@ -261,6 +327,9 @@ pub fn show_hud(window: &NSWindow, volume: f32, muted: bool) {
             }
         }
     });
+
+    // Re-center on whichever screen has the mouse so the HUD follows the user.
+    center_on_active_screen(window);
 
     window.setAlphaValue(1.0);
     window.orderFrontRegardless();

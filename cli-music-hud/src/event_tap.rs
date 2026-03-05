@@ -3,6 +3,8 @@ use core_foundation::mach_port::CFMachPortRef;
 use core_foundation::runloop::{
     kCFRunLoopCommonModes, CFRunLoop, CFRunLoopSource, CFRunLoopSourceRef,
 };
+use objc2::msg_send;
+use objc2::runtime::AnyObject;
 use std::os::raw::c_void;
 use std::sync::Mutex;
 
@@ -29,7 +31,6 @@ extern "C" {
     ) -> CFMachPortRef;
 
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
-    fn CGEventGetIntegerValueField(event: CGEventRef, field: u32) -> i64;
 
     fn CFMachPortCreateRunLoopSource(
         allocator: *const c_void,
@@ -51,14 +52,18 @@ const NX_SYSDEFINED: u32 = 14;
 const K_CG_EVENT_TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFFFFFE;
 
 // NX key type constants encoded in data1 of NX_SYSDEFINED events.
-const NX_KEYTYPE_SOUND_UP: i64 = 0;
-const NX_KEYTYPE_SOUND_DOWN: i64 = 1;
-const NX_KEYTYPE_MUTE: i64 = 7;
-const NX_SUBTYPE_AUX_CONTROL_BUTTONS: i64 = 8;
+const NX_KEYTYPE_SOUND_UP: isize = 0;
+const NX_KEYTYPE_SOUND_DOWN: isize = 1;
+const NX_KEYTYPE_MUTE: isize = 7;
+// NSEventSubtype value for auxiliary control buttons (media keys).
+const NX_SUBTYPE_AUX_CONTROL_BUTTONS: i16 = 8;
 
-// CGEventField values for reading NX_SYSDEFINED data.
-const EVENT_FIELD_SUBTYPE: u32 = 110; // 0x6E
-const EVENT_FIELD_DATA1: u32 = 111;   // 0x6F
+/// A volume key event with optional shift modifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VolumeKeyEvent {
+    pub key: VolumeKey,
+    pub shift: bool,
+}
 
 /// Represents the type of volume key event intercepted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,15 +73,27 @@ pub enum VolumeKey {
     Mute,
 }
 
-/// Decode a volume key press from a raw NX_SYSDEFINED event.
-/// Returns `Some(VolumeKey)` only on key-down events.
-unsafe fn decode_volume_key(event: CGEventRef) -> Option<VolumeKey> {
-    let subtype = CGEventGetIntegerValueField(event, EVENT_FIELD_SUBTYPE);
+/// Decode a volume key press from a raw NX_SYSDEFINED CGEvent.
+///
+/// Converts the CGEvent to an NSEvent to read `subtype` and `data1`, because
+/// `CGEventGetIntegerValueField` does not expose these fields for system-defined
+/// events.
+///
+/// Returns `Some(VolumeKeyEvent)` only on key-down events.
+unsafe fn decode_volume_key(event: CGEventRef) -> Option<VolumeKeyEvent> {
+    // Convert CGEventRef → NSEvent via [NSEvent eventWithCGEvent:]
+    let cls = objc2::runtime::AnyClass::get(c"NSEvent")?;
+    let ns_event: *mut AnyObject = msg_send![cls, eventWithCGEvent: event];
+    if ns_event.is_null() {
+        return None;
+    }
+
+    let subtype: i16 = msg_send![ns_event, subtype];
     if subtype != NX_SUBTYPE_AUX_CONTROL_BUTTONS {
         return None;
     }
 
-    let data1 = CGEventGetIntegerValueField(event, EVENT_FIELD_DATA1);
+    let data1: isize = msg_send![ns_event, data1];
     let key_code = (data1 >> 16) & 0xFF;
     let key_flags = (data1 >> 8) & 0xFF;
     let key_down = (key_flags & 0x01) != 0;
@@ -85,17 +102,23 @@ unsafe fn decode_volume_key(event: CGEventRef) -> Option<VolumeKey> {
         return None;
     }
 
-    match key_code {
-        NX_KEYTYPE_SOUND_UP => Some(VolumeKey::Up),
-        NX_KEYTYPE_SOUND_DOWN => Some(VolumeKey::Down),
-        NX_KEYTYPE_MUTE => Some(VolumeKey::Mute),
-        _ => None,
-    }
+    const NS_EVENT_MODIFIER_FLAG_SHIFT: usize = 1 << 17;
+    let modifier_flags: usize = msg_send![ns_event, modifierFlags];
+    let shift = (modifier_flags & NS_EVENT_MODIFIER_FLAG_SHIFT) != 0;
+
+    let key = match key_code {
+        NX_KEYTYPE_SOUND_UP => VolumeKey::Up,
+        NX_KEYTYPE_SOUND_DOWN => VolumeKey::Down,
+        NX_KEYTYPE_MUTE => VolumeKey::Mute,
+        _ => return None,
+    };
+
+    Some(VolumeKeyEvent { key, shift })
 }
 
 /// State shared between the event tap callback and the run loop.
 struct TapState {
-    callback: Box<dyn FnMut(VolumeKey) + Send>,
+    callback: Box<dyn FnMut(VolumeKeyEvent) + Send>,
     port: CFMachPortRef,
 }
 
@@ -122,13 +145,13 @@ unsafe extern "C" fn tap_callback(
         return event;
     }
 
-    let volume_key = decode_volume_key(event);
+    let volume_event = decode_volume_key(event);
 
-    match volume_key {
-        Some(key) => {
+    match volume_event {
+        Some(evt) => {
             let state = &*(user_info as *const Mutex<TapState>);
             if let Ok(mut guard) = state.lock() {
-                (guard.callback)(key);
+                (guard.callback)(evt);
             }
             // Return NULL to swallow the event (suppress native HUD).
             std::ptr::null_mut()
@@ -149,7 +172,7 @@ unsafe extern "C" fn tap_callback(
 /// lacks Accessibility permissions).
 pub fn run_event_tap<F>(on_volume_key: F) -> Result<(), String>
 where
-    F: FnMut(VolumeKey) + Send + 'static,
+    F: FnMut(VolumeKeyEvent) + Send + 'static,
 {
     // Event mask: NX_SYSDEFINED (bit 14) only. The timeout event is delivered
     // automatically regardless of the mask.

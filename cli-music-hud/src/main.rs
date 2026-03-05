@@ -3,7 +3,7 @@ mod event_tap;
 mod hud;
 mod login_item;
 
-use event_tap::VolumeKey;
+use event_tap::{VolumeKey, VolumeKeyEvent};
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
 use objc2_foundation::{NSDate, NSRunLoop};
@@ -11,10 +11,13 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 /// How long the HUD stays visible before fading out (seconds).
-const HUD_DISPLAY_DURATION: f64 = 1.5;
+const HUD_DISPLAY_DURATION: f64 = 0.75;
 
 /// How often we poll for events (seconds).
 const POLL_INTERVAL: f64 = 0.05;
+
+/// Large step when Shift is held (20% of full range).
+const VOLUME_STEP_LARGE: f32 = 0.20;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -47,13 +50,13 @@ fn main() {
     let window = hud::create_hud_window(mtm);
 
     // ── 3. Event tap on a background thread ─────────────────────────────
-    let (tx, rx) = mpsc::channel::<VolumeKey>();
+    let (tx, rx) = mpsc::channel::<VolumeKeyEvent>();
 
     std::thread::spawn(move || {
-        if let Err(e) = event_tap::run_event_tap(move |key| {
-            let _ = tx.send(key);
+        if let Err(e) = event_tap::run_event_tap(move |evt| {
+            let _ = tx.send(evt);
         }) {
-            eprintln!("Event tap error: {e}");
+            eprintln!("[hud] event tap error: {e}");
             std::process::exit(1);
         }
     });
@@ -70,7 +73,7 @@ fn main() {
         run_loop.runUntilDate(&until);
 
         // Process all queued volume-key events.
-        while let Ok(key) = rx.try_recv() {
+        while let Ok(evt) = rx.try_recv() {
             // Re-query the default device each time in case the user switched
             // audio output (headphones, AirPods, etc.).
             let device = match audio::default_output_device() {
@@ -78,17 +81,12 @@ fn main() {
                 None => continue,
             };
 
-            match key {
-                VolumeKey::Up => {
+            match evt.key {
+                VolumeKey::Up | VolumeKey::Down => {
+                    let step = if evt.shift { VOLUME_STEP_LARGE } else { audio::VOLUME_STEP };
+                    let delta = if evt.key == VolumeKey::Up { step } else { -step };
                     let vol = audio::get_volume(device).unwrap_or(0.0);
-                    let new_vol = (vol + audio::VOLUME_STEP).min(1.0);
-                    audio::set_volume(device, new_vol);
-                    let muted = audio::is_muted(device).unwrap_or(false);
-                    hud::show_hud(&window, new_vol, muted);
-                }
-                VolumeKey::Down => {
-                    let vol = audio::get_volume(device).unwrap_or(0.0);
-                    let new_vol = (vol - audio::VOLUME_STEP).max(0.0);
+                    let new_vol = (vol + delta).clamp(0.0, 1.0);
                     audio::set_volume(device, new_vol);
                     let muted = audio::is_muted(device).unwrap_or(false);
                     hud::show_hud(&window, new_vol, muted);
