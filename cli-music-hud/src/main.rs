@@ -1,4 +1,5 @@
 mod audio;
+mod config;
 mod event_tap;
 mod hud;
 mod login_item;
@@ -47,7 +48,8 @@ fn main() {
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
 
     // ── 2. HUD window ───────────────────────────────────────────────────
-    let window = hud::create_hud_window(mtm);
+    let style = config::load_style();
+    let window = hud::create_hud_window(mtm, style);
 
     // ── 3. Event tap on a background thread ─────────────────────────────
     let (tx, rx) = mpsc::channel::<VolumeKeyEvent>();
